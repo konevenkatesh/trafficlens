@@ -129,12 +129,23 @@ def station(site_id: int):
         raise HTTPException(404, "no such station")
     hrs = work.hours(site_id)
     todo_s = sum(sum(f["seconds_here"] for f in h["files"] if not f["tracks"]) for h in hrs)
+
+    # An extraction that failed leaves the hour looking exactly like one never started:
+    # no tracks, tile says "detect". The surveyor presses it again, it fails again, and
+    # nothing on screen ever says why. Surface it.
+    fails = db.rows("""SELECT j.video_id, j.message, j.finished, v.name
+                       FROM jobs j JOIN videos v ON v.id=j.video_id
+                       WHERE v.site_id=? AND j.kind='extract' AND j.status='error'
+                         AND NOT EXISTS (SELECT 1 FROM tracks t WHERE t.video_id=j.video_id)
+                       ORDER BY j.id DESC LIMIT 10""", site_id)
     return {"station": {"id": s["id"], "code": s["code"], "name": s["name"]},
             "progress": _progress(site_id),
             "hours": hrs,
             "line": db.jload(s["default_line"], []),
             "device": work.device_note(),
             "remaining_estimate_s": round(work.estimate_s(todo_s)),
+            "failures": [{"video_id": f["video_id"], "name": f["name"],
+                          "message": (f["message"] or "")[:200]} for f in fails],
             "queue": work.queue_state()}
 
 

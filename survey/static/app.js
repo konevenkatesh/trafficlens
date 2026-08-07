@@ -125,6 +125,15 @@ async function viewStation(id) {
         <div class="n">${s.done ? '✓' : i + 1}</div><div>${esc(s.label)}</div>
       </div>`).join('')}</div>
 
+    ${(d.failures || []).length ? `<div class="card"
+      style="margin-bottom:14px;border-color:var(--cc-bad)"><div class="card-body">
+      <b>${d.failures.length} recording(s) could not be processed</b>
+      <p class="muted-sm" style="margin:6px 0 0">These hours will stay incomplete until
+        the cause is fixed. Pressing detect again will hit the same error.</p>
+      <ul class="muted-sm" style="margin:8px 0 0;padding-left:18px">
+        ${d.failures.map(f => `<li><b>${esc(f.name)}</b> — ${esc(f.message) || 'no reason recorded'}</li>`).join('')}
+      </ul></div></div>` : ''}
+
     <div id="stepFolder"></div>
     ${p.folder ? `<div id="stepLine"></div>` : ''}
     ${p.folder && p.line ? `<div id="stepHours"></div>` : ''}

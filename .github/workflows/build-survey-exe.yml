@@ -132,3 +132,73 @@ jobs:
           name: TrafficLens-portable
           path: TrafficLens-portable.zip
           retention-days: 30
+
+  # ── the test that matters: install the thing and use it ──
+  # The build job only proves the process starts and knows what a detector is. Everything
+  # a surveyor actually does — read a folder, place it on a timeline, run the detector,
+  # count, produce a workbook — was until now only ever verified on a Mac.
+  end-to-end:
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: TrafficLens-Setup
+
+      - name: Install it the way a surveyor would
+        shell: pwsh
+        run: |
+          # The same silent switches an IT department would use to push it out. /DIR is
+          # set explicitly only so the test knows where to find the exe afterwards.
+          $dir = "$env:LOCALAPPDATA\TrafficLens"
+          Start-Process -Wait -FilePath .\TrafficLens-Setup.exe `
+            -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=$dir"
+          if (-not (Test-Path "$dir\TrafficLens.exe")) { throw "installer produced no exe at $dir" }
+          Write-Host "installed to $dir"
+          Get-ChildItem $dir | Select-Object -First 5 Name, Length | Format-Table
+
+      - name: Make a test recording
+        # A generated clip, not real footage: client recordings do not belong in CI, and
+        # this test is about the machinery rather than detection quality. The filename
+        # carries a clock because that is how recordings get placed on the timeline.
+        shell: pwsh
+        run: |
+          $ff = Get-ChildItem "$env:LOCALAPPDATA\TrafficLens" -Recurse -Filter ffprobe.exe |
+                Select-Object -First 1
+          Write-Host "bundled ffprobe: $($ff.FullName)"
+          choco install ffmpeg --no-progress -y | Out-Null
+          New-Item -ItemType Directory -Force testfootage | Out-Null
+          ffmpeg -y -v error -f lavfi -i testsrc=size=1920x1080:rate=12:duration=20 `
+                 -c:v libx264 -pix_fmt yuv420p testfootage/ch01_20260101120000.mp4
+          Get-Item testfootage/*.mp4 | ForEach-Object {
+            Write-Host ("  {0}  {1:N1} MB" -f $_.Name, ($_.Length/1MB)) }
+
+      - name: Run a whole survey against it
+        shell: pwsh
+        env:
+          TRAFFICLENS_PORT: "8801"
+          TRAFFICLENS_NO_BROWSER: "1"
+        run: |
+          $exe = "$env:LOCALAPPDATA\TrafficLens\TrafficLens.exe"
+          $p = Start-Process -PassThru -RedirectStandardOutput e2e.out `
+                 -RedirectStandardError e2e.err $exe
+          foreach ($i in 1..120) {
+            Start-Sleep -Seconds 2
+            if ($p.HasExited) { break }
+            try {
+              if ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8801/api/health `
+                    -TimeoutSec 3).StatusCode -eq 200) { break }
+            } catch { }
+          }
+          python survey/e2e_check.py http://127.0.0.1:8801 testfootage
+          $code = $LASTEXITCODE
+          Write-Host "----- app stdout -----"; Get-Content e2e.out -ErrorAction SilentlyContinue
+          Write-Host "----- app stderr -----"; Get-Content e2e.err -ErrorAction SilentlyContinue
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if ($code -ne 0) { throw "the installed app failed the end-to-end run" }
