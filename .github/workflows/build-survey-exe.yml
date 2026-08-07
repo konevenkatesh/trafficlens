@@ -41,27 +41,6 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Fetch model weights
-        # The repo is source only. Weights live as assets on the `weights` release, so a
-        # clone stays 1.4MB and a retrain does not add another 20MB to history forever.
-        # They are pulled in HERE, before freezing, so the .exe the surveyor receives
-        # still carries everything inside it and never downloads anything at run time.
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          New-Item -ItemType Directory -Force models/attrs | Out-Null
-          gh release download weights --dir models --pattern "*.pt" --clobber
-          # The axle head belongs in models/attrs, not models/ — seed.py and the spec
-          # both look for it there.
-          Get-ChildItem models -Filter "axles_*.pt" | ForEach-Object {
-            Move-Item $_.FullName models/attrs/ -Force
-          }
-          $n = (Get-ChildItem models -Recurse -Filter *.pt).Count
-          if ($n -lt 2) { throw "expected detector + axle head, found $n weight files" }
-          Get-ChildItem models -Recurse -Filter *.pt |
-            ForEach-Object { Write-Host ("  {0}  {1:N1} MB" -f $_.Name, ($_.Length/1MB)) }
-
       - name: Fetch ffprobe
         # Windows ships no ffprobe, and the app cannot read a recording's duration or
         # frame rate without one — every file would look unreadable. A static build is
@@ -87,27 +66,42 @@ jobs:
         run: pyinstaller --noconfirm --clean survey/TrafficLens.spec
 
       - name: Smoke-test the binary
-        # Start it, wait for the port, fetch /api/health. A build that produces an .exe
-        # which dies on launch is worse than a failed build, because it ships.
+        # A build that produces an .exe which dies on launch is worse than a failed
+        # build, because it ships. The first attempt at this test told me only that the
+        # app "did not answer" — it discarded the app's own output, so there was nothing
+        # to diagnose. Everything the app prints is captured and dumped on failure.
         shell: pwsh
+        env:
+          TRAFFICLENS_PORT: "8801"        # an explicit address to poll
+          TRAFFICLENS_NO_BROWSER: "1"     # no browser to open on a build agent
         run: |
-          $p = Start-Process -PassThru dist/TrafficLens/TrafficLens.exe
+          $p = Start-Process -PassThru -RedirectStandardOutput app.out `
+                 -RedirectStandardError app.err dist/TrafficLens/TrafficLens.exe
           $ok = $false
-          foreach ($i in 1..60) {
+          # 4 minutes: importing torch and loading the axle checkpoint is slow on a cold
+          # runner, and a timeout that is merely tight looks identical to a crash.
+          foreach ($i in 1..120) {
             Start-Sleep -Seconds 2
+            if ($p.HasExited) { Write-Host "the app exited early (code $($p.ExitCode))"; break }
             try {
               $r = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8801/api/health -TimeoutSec 3
               if ($r.StatusCode -eq 200) { $ok = $true; break }
             } catch { }
           }
-          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          if (-not $ok) { throw "the built app did not answer /api/health" }
+          if (-not $ok) {
+            Write-Host "----- stdout -----"; Get-Content app.out -ErrorAction SilentlyContinue
+            Write-Host "----- stderr -----"; Get-Content app.err -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw "the built app did not answer /api/health"
+          }
           Write-Host "binary answered /api/health"
-          # A build that answers /api/health but has no registered detector cannot count
-          # anything, and that failure would only surface on a surveyor's laptop.
+          # Answering is not enough: with no registered detector it cannot count anything,
+          # and that failure would only surface on a surveyor's laptop.
           $m = Invoke-RestMethod http://127.0.0.1:8801/api/models
           if (-not $m.default) { throw "no default detector registered in the built app" }
           Write-Host "default detector: $($m.default)"
+          Write-Host "----- app log -----"; Get-Content app.out -ErrorAction SilentlyContinue
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
       - name: Zip
         run: Compress-Archive -Path dist/TrafficLens/* -DestinationPath TrafficLens-windows.zip

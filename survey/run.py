@@ -42,6 +42,11 @@ def _data_dir():
 
 
 def _free_port(preferred=8801):
+    # An explicit port makes the app checkable by something other than a human: the CI
+    # smoke test has to know where to look, and "whatever was free" is not an address.
+    forced = os.environ.get("TRAFFICLENS_PORT")
+    if forced:
+        return int(forced)
     with socket.socket() as s:
         try:
             s.bind(("127.0.0.1", preferred))
@@ -97,7 +102,8 @@ def main():
                 continue
         webbrowser.open(url)
 
-    threading.Thread(target=open_when_up, daemon=True).start()
+    if os.environ.get("TRAFFICLENS_NO_BROWSER") != "1":
+        threading.Thread(target=open_when_up, daemon=True).start()
     print(f"  ready: {url}\n  keep this window open while you work.", flush=True)
 
     import uvicorn

@@ -23,13 +23,24 @@ app/renders/
 benchmark/*
 !benchmark/bytetrack_low.yaml
 
-# No weights in the repo. This is source only: 147MB of .pt files would dominate every
-# clone, and git stores binaries badly -- each retrain adds the whole file again.
+# Weights the app ships live in the repo: 147MB total, largest file 42MB, well inside
+# what git and GitHub handle. Keeping them here means the build has no external
+# dependency and a clone is immediately buildable -- the release-asset indirection cost
+# an ordering failure on its first run and bought nothing.
 #
-# The weights live as assets on a GitHub Release instead, and the Windows build downloads
-# them before freezing, so the .exe a surveyor gets still has everything inside it and
-# never phones home. See .github/workflows/build-survey-exe.yml.
-models/
+# NOT the whole folder though. 613MB of it is superseded work: nine axle checkpoints the
+# promotion gate REJECTED, plus an experimental detector. Rejected weights sitting next
+# to blessed ones, told apart only by a content hash, are one careless path away from
+# production.
+models/*
+!models/yolo26s_morth15_v1.pt
+!models/yolo26s_morth15_v2.pt
+!models/yolo26s_morth15_v3.pt
+!models/yolo26s_morth15_v4.pt
+!models/yolo26s_morth15_v5.pt
+!models/attrs/
+models/attrs/*
+!models/attrs/axles_resnet18_4d598166.pt
 
 # Environment and noise
 .venv/
