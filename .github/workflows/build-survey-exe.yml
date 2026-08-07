@@ -103,11 +103,32 @@ jobs:
           Write-Host "----- app log -----"; Get-Content app.out -ErrorAction SilentlyContinue
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
-      - name: Zip
-        run: Compress-Archive -Path dist/TrafficLens/* -DestinationPath TrafficLens-windows.zip
+      - name: Build the installer
+        # Inno Setup, not MSI: no admin rights needed, and a per-user install into
+        # LOCALAPPDATA works on the managed laptops these surveyors actually have.
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+              /DAppVersion=1.0.$env:GITHUB_RUN_NUMBER `
+              /O"$PWD" survey/installer.iss
+          if (-not (Test-Path TrafficLens-Setup.exe)) { throw "installer was not produced" }
+          $mb = (Get-Item TrafficLens-Setup.exe).Length / 1MB
+          Write-Host ("installer: {0:N0} MB" -f $mb)
+
+      - name: Zip the portable build
+        # Shipped alongside the installer: unzip and run, no install, works from a USB
+        # stick — which is how footage reaches some of these offices in the first place.
+        run: Compress-Archive -Path dist/TrafficLens/* -DestinationPath TrafficLens-portable.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: TrafficLens-windows
-          path: TrafficLens-windows.zip
+          name: TrafficLens-Setup
+          path: TrafficLens-Setup.exe
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TrafficLens-portable
+          path: TrafficLens-portable.zip
           retention-days: 30

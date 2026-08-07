@@ -15,6 +15,7 @@ What it does share is the engine, because that is the part that must not fork: t
 `engine.extract`, the same `counting.count_video`, the same `verify`, the same
 `report_card`. A second implementation of counting would be a second set of numbers.
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,7 +33,19 @@ import db          # noqa: E402
 import work        # noqa: E402
 
 app = FastAPI(title="TrafficLens Survey")
-STATIC = Path(__file__).parent / "static"
+
+# Where the bundled files live. Frozen, everything is unpacked under sys._MEIPASS and
+# `__file__` points inside it, so `Path(__file__).parent / "static"` resolves to
+# _internal/static -- which does not exist, because the spec places these at
+# survey/static. Laying both cases out explicitly is the only way this stays true in a
+# build nobody can run locally.
+BUNDLE = Path(getattr(sys, "_MEIPASS", ROOT))
+STATIC = BUNDLE / "survey" / "static"
+SHARED = BUNDLE / "shared"
+
+# Written at run time, so never inside the bundle: that is a temp directory in a frozen
+# build, deleted on exit, and read-only under Program Files.
+OUT = Path(os.environ.get("TRAFFICLENS_DATA") or ROOT) / "reports"
 
 
 @app.middleware("http")
@@ -461,7 +474,7 @@ def report_xlsx(site_id: int):
     if not vids:
         raise HTTPException(400, "nothing extracted yet")
     s = db.one("SELECT code FROM sites WHERE id=?", site_id)
-    out = ROOT / "survey_out" / f"{s['code']}_count.xlsx"
+    out = OUT / f"{s['code']}_count.xlsx"
     out.parent.mkdir(parents=True, exist_ok=True)
     # build() collects, write() renders. Two calls, not one -- passing the path to build()
     # would silently be read as its `meta` argument and produce a workbook nowhere.
@@ -473,7 +486,7 @@ def report_xlsx(site_id: int):
 
 # ───────────────────────────── shell ─────────────────────────────
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
-app.mount("/shared", StaticFiles(directory=str(ROOT / "shared")), name="shared")
+app.mount("/shared", StaticFiles(directory=str(SHARED)), name="shared")
 
 
 @app.get("/")
