@@ -60,12 +60,28 @@ def main():
     sys.path.append(str(base / "lab"))
 
     data = _data_dir()
+    # Read by verify and axle_pass to place their crop caches. Set BEFORE those modules
+    # are imported, because both resolve it at import time — and their default is inside
+    # the bundle, which is a temp directory that disappears when the app closes.
+    os.environ.setdefault("TRAFFICLENS_DATA", str(data))
     print(f"TrafficLens Survey\n  data: {data}\n  loading (this takes a few seconds)…",
           flush=True)
 
     import db
     db.DB_PATH = data / "trafficlens.db"     # before any connection is opened
     db.conn()
+
+    # A fresh database knows nothing about the weights shipped alongside it, and the rows
+    # in a copied one point at paths from the machine that built it. Recompute both from
+    # where this copy is actually installed, every start.
+    import seed
+    try:
+        s = seed.run()
+        print(f"  detector: {s['detectors'].get('default')}"
+              f"  ·  axle head: {'yes' if s['axles'].get('model_id') else s['axles'].get('skipped')}",
+              flush=True)
+    except Exception as e:
+        print(f"  WARNING: could not register the bundled models: {e}", flush=True)
 
     import api
     port = _free_port()

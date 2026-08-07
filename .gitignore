@@ -60,3 +60,7 @@ app/reports_out/
 *.tar.gz
 /trafficlens.db
 bin/
+
+# Past client deliverables. Not needed to build the app, and client material does not
+# belong in a build repo even a private one.
+delivery/

@@ -21,6 +21,7 @@ carrying the most PCU, the ones the models disagreed about, the ones a classifie
 below its own floor. `mandatory()` names them so "review what matters" is a button rather
 than a judgement call, and "review everything" is still there when there is time.
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,7 +33,10 @@ sys.path.insert(0, str(ROOT / "app"))
 
 from engine import CLASSES  # noqa: E402
 
-CROP_DIR = ROOT / "lab_gold" / "_verify"
+# Written at runtime, so it must never be inside a PyInstaller bundle: that unpacks to a
+# temp directory which is deleted on exit, and under Program Files it is read-only.
+# TRAFFICLENS_DATA is set by the packaged launcher; unset means running from the repo.
+CROP_DIR = Path(os.environ.get("TRAFFICLENS_DATA") or ROOT) / "lab_gold" / "_verify"
 
 # The answer list. Classes replace what the vehicle IS; attributes add a fact about it and
 # leave the class alone -- an APSRTC bus is still a Bus in the vehicle count and only

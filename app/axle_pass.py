@@ -26,6 +26,7 @@ data while the report kept publishing the detector's guess; that is not a bug wo
 twice.
 """
 import json
+import os
 import sys
 import time
 from collections import Counter
@@ -35,7 +36,9 @@ import db
 from engine import CLASSES
 
 ROOT = Path(__file__).parent.parent
-CROP_DIR = ROOT / "app" / "axle_crops"
+# Runtime output, so it follows the data directory rather than the install directory --
+# a packaged build's own folder is temporary and may be read-only.
+CROP_DIR = Path(os.environ.get("TRAFFICLENS_DATA") or ROOT / "app") / "axle_crops"
 
 ATTR = "axles"
 # Answer -> MoRTH class. `not_a_truck` names no class: it says the detection was wrong

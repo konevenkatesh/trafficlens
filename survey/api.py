@@ -286,7 +286,7 @@ def _site_videos(site_id):
 
 
 @app.get("/api/stations/{site_id}/review")
-def review(site_id: int, mode: str = "critical", limit: int = 300):
+def review(site_id: int, mode: str = "critical", cls: str = "", limit: int = 300):
     """One review queue for the whole station, hardest-first.
 
     Per-clip queues are the Lab's model and they are wrong here: a surveyor does not care
@@ -300,12 +300,18 @@ def review(site_id: int, mode: str = "critical", limit: int = 300):
     """
     import verify
     items, totals = [], {"total": 0, "mandatory": 0, "answered": 0}
+    mix = {}
     for vid in _site_videos(site_id):
-        q = verify.queue(vid, mandatory_only=(mode == "critical"),
+        q = verify.queue(vid, only_class=cls or None,
+                         mandatory_only=(mode == "critical"),
                          answered=False if mode != "done" else True, limit=limit)
         totals["total"] += q.get("total", 0)
         totals["mandatory"] += q.get("mandatory", 0)
         totals["answered"] += q.get("answered", 0)
+        # The class list comes from the UNFILTERED counts, or picking "Bus" would leave
+        # the dropdown showing only Bus and no way back to the others.
+        for c, n in (q.get("classes") or []):
+            mix[c] = mix.get(c, 0) + n
         for it in q.get("items", []):
             items.append({**it, "video_id": vid, "clip": q.get("video", {}).get("name")})
         if len(items) >= limit:
@@ -313,7 +319,8 @@ def review(site_id: int, mode: str = "critical", limit: int = 300):
     # Biggest first: a vehicle 1000px wide is one a person can settle in a second, and
     # front-loading those means an interrupted session still got through the easy wins.
     items.sort(key=lambda x: (not x.get("mandatory"), -(x.get("box_w") or 0)))
-    return {"items": items[:limit], "mode": mode, **totals,
+    return {"items": items[:limit], "mode": mode, "cls": cls, **totals,
+            "classes": sorted(mix.items(), key=lambda kv: -kv[1]),
             "answers": verify.answers() if hasattr(verify, "answers") else None}
 
 
@@ -343,6 +350,45 @@ def review_image(video_id: int, track_id: int, kind: str):
 
 
 # ───────────────────────────── the report ─────────────────────────────
+def _overlaps(video_ids):
+    """Recordings whose clock times cover each other — i.e. traffic counted twice.
+
+    This is not hypothetical. Attaching a folder that still holds the original 80-minute
+    recordings alongside the 15-minute clips cut from them puts the same vehicles on the
+    timeline under two names, and the total looks entirely plausible: it is simply
+    double. Nothing else in the pipeline notices, because every clip is individually
+    correct. So the report says so, loudly, rather than quietly adding them up.
+    """
+    from datetime import datetime, timedelta
+    spans = []
+    for v in db.rows(f"""SELECT id,name,start_clock,frames,fps FROM videos
+                         WHERE id IN ({','.join('?' * len(video_ids))})
+                         AND start_clock IS NOT NULL""", *video_ids):
+        try:
+            a = datetime.strptime(v["start_clock"][:19], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            continue
+        d = (v["frames"] or 0) / (v["fps"] or 1)
+        if d > 0:
+            spans.append((a, a + timedelta(seconds=d), v))
+    spans.sort()
+    out = []
+    for i in range(len(spans)):
+        for j in range(i + 1, len(spans)):
+            a0, a1, va = spans[i]
+            b0, b1, vb = spans[j]
+            if b0 >= a1:
+                break                       # sorted: nothing later can overlap either
+            secs = (min(a1, b1) - b0).total_seconds()
+            # A second or two of rounding at a clip boundary is not a double count.
+            if secs > 30:
+                out.append({"a": va["name"], "b": vb["name"],
+                            "a_id": va["id"], "b_id": vb["id"],
+                            "minutes": round(secs / 60, 1),
+                            "from": b0.strftime("%Y-%m-%d %H:%M")})
+    return out
+
+
 @app.get("/api/stations/{site_id}/report")
 def report(site_id: int):
     """The station's numbers, rolled up from every extracted clip.
@@ -385,6 +431,7 @@ def report(site_id: int):
                       "pcu": c["pcu_total"],
                       "checks": [x for x in c.get("checks", []) if x.get("level") != "ok"]})
     bins.sort(key=lambda b: b["t"])
+    overlaps = _overlaps(vids)
     hourly = {}
     for b in bins:
         h = b["t"][:13] + ":00"
@@ -399,6 +446,7 @@ def report(site_id: int):
         "hourly": [{"hour": k, "n": v} for k, v in sorted(hourly.items())],
         "attributes": list(attrs.values()),
         "clips": clips,
+        "overlaps": overlaps,
         "reviewed": db.one(
             f"""SELECT COUNT(*) n FROM clip_verdicts WHERE video_id IN
                 ({','.join('?' * len(vids))})""", *vids)["n"],

@@ -61,6 +61,21 @@ def clock_of(name):
     return None
 
 
+def _ffprobe():
+    """ffprobe, from the bundle if this is a packaged build, else from PATH.
+
+    A frozen Windows build has no system ffprobe and no PATH entry for one, so the plain
+    name fails and every recording looks unreadable. sys._MEIPASS is where PyInstaller
+    unpacks bundled binaries.
+    """
+    import shutil
+    base = Path(getattr(sys, "_MEIPASS", ""))
+    for c in (base / "ffprobe.exe", base / "ffprobe"):
+        if c.is_file():
+            return str(c)
+    return shutil.which("ffprobe") or "ffprobe"
+
+
 def probe(path):
     """Duration, fps and dimensions.
 
@@ -76,7 +91,7 @@ def probe(path):
     import json as _json
     try:
         out = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+            [_ffprobe(), "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=avg_frame_rate,nb_frames,width,height",
              "-show_entries", "format=duration", "-of", "json", str(path)],
             capture_output=True, text=True, timeout=120)
@@ -141,7 +156,8 @@ def attach(site_id, folder):
         return s
     db.run("UPDATE sites SET footage_dir=? WHERE id=?", str(Path(folder)), site_id)
     known = {r["path"] for r in db.rows("SELECT path FROM videos WHERE site_id=?", site_id)}
-    added, skipped = [], []
+    covered = _covered_spans(site_id)
+    added, skipped, duplicates = [], [], []
     for f in s["files"]:
         if f["path"] in known:
             continue
@@ -151,6 +167,14 @@ def attach(site_id, folder):
         if not f.get("fps"):
             skipped.append(f["name"])       # unreadable: ffprobe could not measure it
             continue
+        # Already on the timeline under a different filename. This happens whenever the
+        # footage has been cut into clips: the folder still holds the original 80-minute
+        # recording, and registering it alongside the five 15-minute clips made from it
+        # puts the same traffic on the timeline twice. Counting both would double every
+        # vehicle in that hour, and the total would still look entirely plausible.
+        if _overlap_fraction(f, covered) >= 0.9:
+            duplicates.append(f["name"])
+            continue
         db.run("""INSERT INTO videos (path,name,fps,frames,width,height,start_clock,
                                       site_id,clock_source,created)
                   VALUES (?,?,?,?,?,?,?,?,'filename',?)""",
@@ -158,7 +182,46 @@ def attach(site_id, folder):
                f.get("height"), f["clock"], site_id, time.time())
         added.append(f["name"])
     return {"folder": str(Path(folder)), "added": added, "skipped": skipped,
+            "duplicates": duplicates,
             "total_files": len(s["files"]), "undated": s["undated"]}
+
+
+def _covered_spans(site_id):
+    """Clock intervals this station already has footage for."""
+    out = []
+    for v in db.rows("""SELECT start_clock, frames, fps FROM videos
+                        WHERE site_id=? AND COALESCE(excluded,0)=0
+                          AND start_clock IS NOT NULL""", site_id):
+        try:
+            t0 = datetime.strptime(v["start_clock"][:19], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            continue
+        d = (v["frames"] or 0) / (v["fps"] or 1)
+        if d > 0:
+            out.append((t0, t0 + timedelta(seconds=d)))
+    return out
+
+
+def _overlap_fraction(f, spans):
+    """How much of this file's running time is already covered by known footage."""
+    try:
+        a = datetime.strptime(f["clock"][:19], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError, KeyError):
+        return 0.0
+    dur = f.get("duration_s") or 0
+    if dur <= 0:
+        return 0.0
+    b = a + timedelta(seconds=dur)
+    # Merge first: five consecutive clips each covering a fifth of the file must add up
+    # to "fully covered", not be judged one at a time and each dismissed as partial.
+    merged = []
+    for s0, s1 in sorted(spans):
+        if merged and s0 <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], s1)
+        else:
+            merged.append([s0, s1])
+    hit = sum(max(0.0, (min(b, s1) - max(a, s0)).total_seconds()) for s0, s1 in merged)
+    return hit / dur
 
 
 # ───────────────────────────── hours ─────────────────────────────
@@ -253,6 +316,22 @@ _WORKER = None
 _CURRENT = {}
 
 
+def default_model():
+    """The detector to use when the surveyor has not picked one.
+
+    Asked of the registry rather than left to engine.MODEL_ID. Those two disagree -- the
+    registry's default is v5, the module constant is v4 -- so passing None quietly ran a
+    different detector from the one the app displays as default. On a survey that is a
+    silent change of instrument halfway through.
+    """
+    try:
+        import models_registry
+        models_registry.init()
+        return models_registry.default_id()
+    except Exception:
+        return None
+
+
 def device_note():
     """What this machine will extract on, and how slow that is -- said before committing.
 
@@ -340,7 +419,7 @@ def _drain():
         jid = db.run("INSERT INTO jobs (video_id,kind,status,progress,started) "
                      "VALUES (?,'extract','queued',0,?)", job["video_id"], time.time())
         try:
-            engine.extract(job["video_id"], jid, model_id=job["model_id"])
+            engine.extract(job["video_id"], jid, model_id=job["model_id"] or default_model())
             _axle(job["video_id"])
         except Exception as e:                      # one bad file must not stop the queue
             db.run("UPDATE jobs SET status='error', message=? WHERE id=?",

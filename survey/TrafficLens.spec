@@ -18,7 +18,18 @@ ROOT = Path(SPECPATH).parent          # noqa: F821 - injected by PyInstaller
 datas = [
     (str(ROOT / "survey" / "static"), "survey/static"),
     (str(ROOT / "shared"), "shared"),
+    # engine.py loads the ByteTrack config from disk at extraction time. It is 505 bytes
+    # and without it extraction dies on the first clip -- the cheapest possible way to
+    # ship a build that installs perfectly and cannot count anything.
+    (str(ROOT / "benchmark" / "bytetrack_low.yaml"), "benchmark"),
 ]
+
+# ffprobe. Both apps shell out to it to read a recording's duration and frame rate, and
+# Windows has no system copy -- without it every file reads as unreadable and the folder
+# cannot be attached at all. The CI drops a static build here before freezing.
+_ff = ROOT / "vendor" / "ffprobe.exe"
+if _ff.is_file():
+    datas.append((str(_ff), "."))
 
 # The detector and the universal heads ship inside the app. A surveyor cannot be asked to
 # fetch weights, and an app that downloads them on first run fails on exactly the

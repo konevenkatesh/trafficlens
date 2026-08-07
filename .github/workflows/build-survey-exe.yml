@@ -36,11 +36,26 @@ jobs:
           pip install ultralytics opencv-python-headless fastapi uvicorn pydantic openpyxl
           pip install pyinstaller
 
+      - name: Fetch ffprobe
+        # Windows ships no ffprobe, and the app cannot read a recording's duration or
+        # frame rate without one — every file would look unreadable. A static build is
+        # vendored into the bundle rather than asking the surveyor to install anything.
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vendor | Out-Null
+          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          Invoke-WebRequest -UseBasicParsing $url -OutFile ff.zip
+          Expand-Archive ff.zip -DestinationPath fftmp
+          $probe = Get-ChildItem fftmp -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $probe) { throw "ffprobe.exe not found in the archive" }
+          Copy-Item $probe.FullName vendor/ffprobe.exe
+          Write-Host "vendored $($probe.FullName)"
+
       - name: Check the app imports before freezing it
         # A missing import found here costs 30 seconds; found after a 20-minute freeze it
         # costs the whole build.
         run: |
-          python -c "import sys; sys.path[:0]=['survey','app']; sys.path.append('lab'); import api, work; print('imports OK')"
+          python -c "import sys; sys.path[:0]=['survey','app']; sys.path.append('lab'); import api, work, seed; print('imports OK')"
 
       - name: Build
         run: pyinstaller --noconfirm --clean survey/TrafficLens.spec
@@ -62,6 +77,11 @@ jobs:
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           if (-not $ok) { throw "the built app did not answer /api/health" }
           Write-Host "binary answered /api/health"
+          # A build that answers /api/health but has no registered detector cannot count
+          # anything, and that failure would only surface on a surveyor's laptop.
+          $m = Invoke-RestMethod http://127.0.0.1:8801/api/models
+          if (-not $m.default) { throw "no default detector registered in the built app" }
+          Write-Host "default detector: $($m.default)"
 
       - name: Zip
         run: Compress-Archive -Path dist/TrafficLens/* -DestinationPath TrafficLens-windows.zip

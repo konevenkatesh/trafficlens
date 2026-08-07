@@ -9,7 +9,8 @@
    the reason next to it teaches the workflow; an enabled one that errors does not. */
 
 import { mountLineEditor } from '/shared/lineeditor.js';
-import { createVoice } from '/static/voice.js';
+import { createVoice, TRAINABLE, loadAliases, saveAlias, forgetAliases }
+  from '/static/voice.js';
 
 const $ = s => document.querySelector(s);
 const app = $('#app');
@@ -361,6 +362,19 @@ function paintAfter(id, d) {
   </div>`;
 }
 
+/* Keys for the six classes that run past 1-9.
+   Mnemonic where possible, and checked against the keys already taken (A attribute,
+   X reject, U unclear, Enter confirm) — a shortcut that shadows another is worse than
+   no shortcut, because it answers something the reviewer did not mean. */
+const CLASS_KEY = {
+  '3Axle_Truck': 'T',      // Three-axle
+  MAV: 'M',
+  Cycle: 'C',
+  Cycle_Rickshaw: 'R',     // Rickshaw
+  Animal_Cart: 'N',        // aNimal — A and C are taken
+  Other: 'O',
+};
+
 /* ─────────────────────────── voice ─────────────────────────── */
 /* Voice drives exactly the same answer() the buttons and keys do. One path to a verdict,
    so there is no way for a spoken answer to be saved differently from a clicked one. */
@@ -392,13 +406,79 @@ const VOICE = createVoice({
   },
 });
 
+/* ── teaching the recogniser this speaker's voice ──
+   The built-in phrase list is a guess about how people say these words. It is wrong often
+   enough to matter: "MAV" comes back as "I am way", "yes" as "s". Rather than keep
+   guessing, the app records what the recogniser ACTUALLY returns for this person on this
+   microphone and stores that as an alias. One pass costs two minutes and fixes the
+   speaker's own worst words for good. */
+function openVoiceTraining() {
+  const rows = () => {
+    const learned = loadAliases();
+    const byId = {};
+    for (const [phrase, id] of Object.entries(learned)) (byId[id] ||= []).push(phrase);
+    return TRAINABLE.map(t => `
+      <tr data-id="${esc(t.id)}">
+        <td><b>${esc(t.label)}</b><div class="muted-sm">say “${esc(t.say)}”</div></td>
+        <td class="learned">${(byId[t.id] || []).map(p =>
+          `<span class="chip ok">${esc(p)}</span>`).join(' ')
+          || '<span class="muted-sm">not trained</span>'}</td>
+        <td class="right"><button class="btn sm ghost" data-rec="${esc(t.id)}">Record</button></td>
+      </tr>`).join('');
+  };
+
+  modal('Teach it your voice', `
+    <p class="muted-sm" style="margin:0 0 12px">Press Record, then say the word once,
+      normally. Whatever the recogniser hears is stored as your way of saying it — so if
+      “MAV” comes back as “I am way”, that becomes a valid command instead of a mistake.
+      Stored on this computer only.</p>
+    <div class="lv-table" style="max-height:52vh;overflow:auto">
+      <table><thead><tr><th>Command</th><th>Your words</th><th></th></tr></thead>
+      <tbody id="vtBody">${rows()}</tbody></table></div>
+    <p class="muted-sm" id="vtStatus" style="min-height:18px;margin:10px 0 0"></p>`,
+    [{ label: 'Clear all training', act: () => {
+        forgetAliases();
+        $('#vtBody').innerHTML = rows(); wireRec();
+        toast('Voice training cleared');
+      } },
+     { label: 'Done', primary: true, act: closeModal }], 'wide');
+
+  function wireRec() {
+    document.querySelectorAll('[data-rec]').forEach(b => b.onclick = async () => {
+      const id = b.dataset.rec;
+      const st = $('#vtStatus');
+      document.querySelectorAll('[data-rec]').forEach(x => { x.disabled = true; });
+      b.textContent = 'Listening…';
+      st.textContent = 'Say it now…';
+      const alts = await VOICE.captureNext(6000);
+      if (!alts.length) {
+        st.textContent = 'Heard nothing — check the microphone and try again.';
+      } else {
+        // Only the top result is stored. Saving every alternative would map a handful of
+        // near-miss phrases to this command, and one of them will collide with another.
+        saveAlias(alts[0], id);
+        st.textContent = `Learned “${alts[0]}”` +
+          (alts.length > 1 ? ` (also heard: ${alts.slice(1, 3).join(', ')})` : '');
+      }
+      $('#vtBody').innerHTML = rows();
+      wireRec();
+    });
+  }
+  wireRec();
+}
+
 /* ─────────────────────────── review ─────────────────────────── */
-let RQ = null, RI = 0, RID = null, RMODE = 'critical';
+let RQ = null, RI = 0, RID = null, RMODE = 'critical', RCLS = '';
 
 async function viewReview(id, mode) {
   RID = id; RMODE = mode === 'all' ? 'all' : 'critical';
+  await reloadReview();
+}
+
+async function reloadReview() {
   app.innerHTML = `<div class="wrap"><div class="boot">Loading vehicles…</div></div>`;
-  RQ = await api(`/api/stations/${id}/review?mode=${RMODE}`, undefined, 'GET');
+  RQ = await api(`/api/stations/${RID}/review?mode=${RMODE}`
+    + `&cls=${encodeURIComponent(RCLS)}`, undefined, 'GET');
   RI = 0;
   drawReview();
 }
@@ -406,6 +486,40 @@ async function viewReview(id, mode) {
 function drawReview() {
   const it = RQ.items[RI];
   const A = RQ.answers || { classes: [], attributes: [] };
+
+  /* Which vehicles to work through. Two independent choices, deliberately kept apart:
+     WHAT needs looking at (everything, or only what the model could not settle) and
+     WHICH class. Combining them into one dropdown would hide "all the buses, including
+     the ones the model was confident about" — which is exactly the audit somebody asks
+     for when a bus count looks wrong. */
+  function filterBar() {
+    const total = (RQ.classes || []).reduce((a, [, n]) => a + n, 0);
+    return `<div class="card rvfilter"><div class="card-body">
+      <div class="seg" role="group">
+        <button data-mode="critical" class="${RMODE === 'critical' ? 'on' : ''}">
+          Needs a check</button>
+        <button data-mode="all" class="${RMODE === 'all' ? 'on' : ''}">Everything</button>
+      </div>
+      <label class="lbl" for="rvCls">Vehicle type</label>
+      <select class="field sm" id="rvCls">
+        <option value="">All types${total ? ` (${num(total)})` : ''}</option>
+        ${(RQ.classes || []).map(([c, n]) =>
+          `<option value="${esc(c)}"${c === RCLS ? ' selected' : ''}>${esc(c)} (${n})</option>`
+        ).join('')}
+      </select>
+      <span style="flex:1"></span>
+      <span class="muted-sm">${num(RQ.items.length)} to go · ${num(RQ.answered)} done</span>
+    </div></div>`;
+  }
+  function wireFilter() {
+    app.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => {
+      if (RMODE === b.dataset.mode) return;
+      RMODE = b.dataset.mode; reloadReview();
+    });
+    const sel = $('#rvCls');
+    if (sel) sel.onchange = () => { RCLS = sel.value; reloadReview(); };
+  }
+
   if (!it) {
     app.innerHTML = `<div class="wrap">
       <div class="page-head"><div><h1>All done</h1>
@@ -413,13 +527,17 @@ function drawReview() {
           ? 'Every vehicle that needed a second opinion has been checked.'
           : 'Every detected vehicle has been checked.'}</p></div>
         <a class="btn ghost" href="#station/${RID}">Back to station</a></div>
+      ${filterBar()}
       <div class="card"><div class="card-body" style="text-align:center;padding:36px">
         <div class="big">${num(RQ.answered)}</div>
         <p class="muted-sm">vehicles you have checked</p>
         <a class="btn primary" href="#report/${RID}" style="margin-top:14px">See the report</a>
-        ${RMODE === 'critical' ? `<a class="btn ghost" href="#review/${RID}/all"
-           style="margin-top:14px">Check the rest too</a>` : ''}
+        ${RMODE === 'critical' ? `<button class="btn ghost" id="rvAll"
+           style="margin-top:14px">Check the rest too</button>` : ''}
       </div></div></div>`;
+    wireFilter();
+    const ra = $('#rvAll');
+    if (ra) ra.onclick = () => { RMODE = 'all'; reloadReview(); };
     return;
   }
   app.innerHTML = `<div class="wrap">
@@ -429,11 +547,14 @@ function drawReview() {
           ? ' needing a check' : ''} · ${esc(it.clock)}</p></div>
       ${VOICE.supported ? `<button class="btn ghost" id="vBtn"
         title="Say the vehicle type instead of clicking. Needs an internet connection —
-the browser sends what you say to its speech service.">🎙 Voice</button>` : ''}
+the browser sends what you say to its speech service.">🎙 Voice</button>
+      <button class="btn ghost" id="vTrain" title="Record how you say each word">Teach</button>` : ''}
       ${/* Not "Stop". Every answer is already written the moment it is pressed, and
             "Stop" reads like abandoning unsaved work — which is exactly the doubt that
             makes somebody sit through a queue they meant to leave. */''}
       <a class="btn ghost" href="#station/${RID}">Finish later</a></div>
+
+    ${filterBar()}
 
     <div class="card"><div class="card-body rv">
       <div class="stage"><div class="imgs">
@@ -469,8 +590,11 @@ the browser sends what you say to its speech service.">🎙 Voice</button>` : ''
             so "LCV is the fourth one on the top row" stays true all afternoon. */''}
       <div class="more">
         <span class="muted-sm lead">or pick the right one:</span>
-        ${A.classes.map((c, n) => `<button class="btn sm ghost" data-a="${esc(c)}"
-          title="${esc(c)}">${n < 9 ? `<kbd>${n + 1}</kbd> ` : ''}${esc(c)}</button>`).join('')}
+        ${A.classes.map((c, n) => {
+          const key = n < 9 ? String(n + 1) : CLASS_KEY[c];
+          return `<button class="btn sm ghost" data-a="${esc(c)}" title="${esc(c)}">${
+            key ? `<kbd>${esc(key)}</kbd> ` : ''}${esc(c)}</button>`;
+        }).join('')}
       </div>
       <div class="nav">
         <button class="btn ghost sm" id="rvBack" ${RI ? '' : 'disabled'}>
@@ -483,6 +607,7 @@ the browser sends what you say to its speech service.">🎙 Voice</button>` : ''
     </div></div>
   </div>`;
 
+  wireFilter();
   app.querySelectorAll('[data-a]').forEach(b => b.onclick = () => answer(b.dataset.a));
 
   /* The attribute phrase is only a live command while an attribute button is on screen,
@@ -501,6 +626,8 @@ the browser sends what you say to its speech service.">🎙 Voice</button>` : ''
     vb.textContent = VOICE.listening() ? '🎙 Listening' : '🎙 Voice';
     vb.onclick = () => VOICE.toggle();
   }
+  const vt = $('#vTrain');
+  if (vt) vt.onclick = () => openVoiceTraining();
   $('#rvBack').onclick = () => { RI = Math.max(0, RI - 1); drawReview(); };
   $('#rvSkip').onclick = () => { RI = Math.min(RQ.items.length, RI + 1); drawReview(); };
   const nx = RQ.items[RI + 1];
@@ -549,12 +676,15 @@ document.addEventListener('keydown', e => {
     if (at) { e.preventDefault(); return answer(at.key); }
   }
 
-  // 1-9 — reclassify. The number printed on the button, so the mapping is never guessed.
+  // 1-9 then the letters — whatever is printed on the button, and nothing else.
   const n = parseInt(e.key, 10);
   if (n >= 1 && n <= 9 && A.classes[n - 1]) {
     e.preventDefault();
     return answer(A.classes[n - 1]);
   }
+  const byLetter = Object.entries(CLASS_KEY)
+    .find(([cls, key]) => key.toLowerCase() === k && A.classes.includes(cls));
+  if (byLetter) { e.preventDefault(); return answer(byLetter[0]); }
 });
 
 /* ─────────────────────────── report ─────────────────────────── */

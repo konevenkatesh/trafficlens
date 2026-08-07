@@ -2,6 +2,7 @@
 import os
 import re
 import subprocess
+import sys
 import time
 from collections import Counter
 from datetime import datetime
@@ -51,9 +52,24 @@ def real_fps(stream):
     return avg or measured or base or 25.0
 
 
+def _ffprobe():
+    """ffprobe, from the bundle if this is a packaged build, else from PATH.
+
+    A frozen Windows build has no system ffprobe and no PATH entry for one, so the plain
+    name fails and every recording looks unreadable. sys._MEIPASS is where PyInstaller
+    unpacks bundled binaries.
+    """
+    import shutil
+    base = Path(getattr(sys, "_MEIPASS", ""))
+    for c in (base / "ffprobe.exe", base / "ffprobe"):
+        if c.is_file():
+            return str(c)
+    return shutil.which("ffprobe") or "ffprobe"
+
+
 def probe(path):
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+        [_ffprobe(), "-v", "error", "-select_streams", "v:0", "-show_entries",
          "stream=r_frame_rate,avg_frame_rate,nb_frames,width,height,duration",
          "-of", "json", str(path)],
         capture_output=True, text=True).stdout

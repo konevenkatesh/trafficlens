@@ -111,3 +111,15 @@
 .vheard { min-height: 18px; margin: 10px 0 0; font-style: italic; }
 .vheard.ok { color: var(--cc-ok-fg); }
 .vheard.warn { color: var(--cc-warn-fg); }
+
+/* Review filter bar: fixed height and position, above the card, so switching type never
+   moves the answer buttons. */
+.rvfilter { margin-bottom: 12px; }
+.rvfilter .card-body { display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
+.rvfilter .lbl { margin: 0; }
+.rvfilter .field { max-width: 230px; }
+.seg { display: inline-flex; border: 1px solid var(--cc-line); border-radius: var(--cc-r-md);
+       overflow: hidden; }
+.seg button { border: 0; background: none; font: inherit; font-size: 13px;
+              padding: 7px 14px; cursor: pointer; color: var(--cc-fg-2); }
+.seg button.on { background: var(--cc-acc); color: #fff; font-weight: 600; }
