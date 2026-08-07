@@ -34,6 +34,27 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 sys.path.append(str(ROOT / "lab"))
 
+# ── offline by construction ──
+# Set before anything imports ultralytics, because it reads all of these at import time.
+# These machines sit in site offices with no connection, and each default here is a way
+# for the app to hang or fail there:
+#
+#   YOLO_OFFLINE     ultralytics probes Cloudflare and Google DNS on import to decide if
+#                    it is online. With no network that is a DNS timeout on every start,
+#                    before the app shows anything.
+#   YOLO_AUTOINSTALL a missing dependency makes it run `pip install` at RUN TIME. In a
+#                    frozen build there is no pip and no index; it would fail loudly at
+#                    the worst moment instead of never being attempted.
+#   YOLO_CONFIG_DIR  it writes a settings file next to the package by default, which in
+#                    a bundle is a temp dir, and under Program Files is read-only.
+#
+# Nothing this app does needs the internet. The one exception is voice recognition, which
+# is opt-in, off by default, and disabled in the UI when the browser reports no network.
+os.environ.setdefault("YOLO_OFFLINE", "1")
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
+os.environ.setdefault("YOLO_CONFIG_DIR",
+                      os.environ.get("TRAFFICLENS_DATA") or str(ROOT / "app"))
+
 import db  # noqa: E402
 
 VIDEO_EXT = {".mp4", ".avi", ".mkv", ".mov", ".m4v", ".ts", ".dav"}

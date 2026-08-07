@@ -1,0 +1,21 @@
+{
+  "settings_version": "0.0.6",
+  "datasets_dir": "/Volumes/MySSD/datasets",
+  "weights_dir": "/Volumes/MySSD/Traffic_Count/weights",
+  "runs_dir": "/Volumes/MySSD/Traffic_Count/runs",
+  "uuid": "9846b4072353acaebd4190c8f66109ac017a89a3f3c5613254d07f524aff5fcc",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "hub": true,
+  "mlflow": true,
+  "neptune": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

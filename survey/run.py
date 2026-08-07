@@ -69,6 +69,9 @@ def main():
     # are imported, because both resolve it at import time — and their default is inside
     # the bundle, which is a temp directory that disappears when the app closes.
     os.environ.setdefault("TRAFFICLENS_DATA", str(data))
+    # ultralytics writes its settings file here rather than into the bundle, which is a
+    # temp directory in a frozen build and read-only under Program Files.
+    os.environ.setdefault("YOLO_CONFIG_DIR", str(data))
     print(f"TrafficLens Survey\n  data: {data}\n  loading (this takes a few seconds)…",
           flush=True)
 

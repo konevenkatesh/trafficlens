@@ -545,10 +545,17 @@ function drawReview() {
       <div><h1 style="font-size:22px">Is this a ${esc(it.class)}?</h1>
         <p>${RI + 1} of ${RQ.items.length}${RMODE === 'critical'
           ? ' needing a check' : ''} · ${esc(it.clock)}</p></div>
-      ${VOICE.supported ? `<button class="btn ghost" id="vBtn"
-        title="Say the vehicle type instead of clicking. Needs an internet connection —
-the browser sends what you say to its speech service.">🎙 Voice</button>
-      <button class="btn ghost" id="vTrain" title="Record how you say each word">Teach</button>` : ''}
+      ${/* Voice is the ONE part of this app that needs a connection: the browser sends
+            the audio to its own speech service. Everything else — detection, counting,
+            the report — runs entirely on this machine. Say so plainly rather than
+            letting a surveyor in a site office press a button that cannot work. */''}
+      ${VOICE.supported ? `<button class="btn ghost" id="vBtn"${navigator.onLine ? '' : ' disabled'}
+        title="${navigator.onLine
+          ? 'Say the vehicle type instead of clicking. Sends what you say to the browser\'s speech service.'
+          : 'No internet connection — speech recognition is the only part of this app that needs one.'}">
+        🎙 Voice${navigator.onLine ? '' : ' (needs internet)'}</button>
+      <button class="btn ghost" id="vTrain"${navigator.onLine ? '' : ' disabled'}
+        title="Record how you say each word">Teach</button>` : ''}
       ${/* Not "Stop". Every answer is already written the moment it is pressed, and
             "Stop" reads like abandoning unsaved work — which is exactly the doubt that
             makes somebody sit through a queue they meant to leave. */''}
