@@ -1,0 +1,864 @@
+/* TrafficLens shared UI — one stylesheet for both the survey app (8799) and the Lab (8800).
+   Tokens lifted verbatim from Frontend Templates / 01-cloud-console so the two apps cannot
+   drift apart. Values are documented there; do not "improve" the palette per-project. */
+
+/* ═══════════════════════════ tokens ═══════════════════════════ */
+:root {
+  --cc-violet-600:#6C47FF;
+  --cc-canvas:#F4F6FA;   --cc-card:#FFFFFF;      --cc-raised:#FFFFFF;
+  --cc-sunken:#F9FAFB;   --cc-hover:#F2F4F7;     --cc-selected:#EAEBEF;
+  --cc-fg:#101828;       --cc-fg-2:#475467;      --cc-fg-3:#667085;    --cc-fg-off:#98A2B3;
+  --cc-fg-inv:#FFFFFF;
+  --cc-line-subtle:#F2F4F7; --cc-line:#E4E7EC;   --cc-line-strong:#D0D5DD;
+  --cc-accent:#6C47FF;   --cc-accent-hover:#5A35EE; --cc-accent-subtle:#F4F1FF; --cc-accent-fg:#5A35EE;
+  --cc-ok:#079455;  --cc-ok-bg:#DCFAE6;  --cc-ok-fg:#067647;
+  --cc-warn:#DC6803;--cc-warn-bg:#FEF0C7;--cc-warn-fg:#B54708;
+  --cc-bad:#D92D20; --cc-bad-bg:#FEE4E2; --cc-bad-fg:#B42318;
+  --cc-info:#1570EF;--cc-info-bg:#D1E9FF;--cc-info-fg:#175CD3;
+  --cc-idle:#667085;
+  /* data-viz roles. Single-hue sequential is the default: most charts here are one
+     series, so identity comes from labels and colour carries magnitude only. */
+  --cc-viz:#7C5CFC; --cc-viz-fill:rgba(124,92,252,.16); --cc-viz-grid:#E4E7EC;
+  --cc-series-1:#2a78d6; --cc-series-2:#eb6834;   /* validated pair, for in/out only */
+  --cc-shadow-1:0 1px 2px rgba(16,24,40,.06);
+  --cc-shadow-2:0 4px 12px rgba(16,24,40,.08);
+  --cc-shadow-3:0 12px 32px rgba(16,24,40,.12);
+  --cc-r-sm:6px; --cc-r-md:8px; --cc-r-lg:12px; --cc-r-xl:16px; --cc-r-full:9999px;
+  --cc-sidebar:228px; --cc-topbar:56px;
+  --cc-fast:140ms cubic-bezier(.4,0,.2,1);
+  --cc-base:200ms cubic-bezier(.4,0,.2,1);
+}
+:root[data-theme="dark"] {
+  --cc-canvas:#0C0E12;   --cc-card:#16181D;      --cc-raised:#1D2027;
+  --cc-sunken:#101216;   --cc-hover:#22252C;     --cc-selected:#292D35;
+  --cc-fg:#F5F6F7;       --cc-fg-2:#CECFD2;      --cc-fg-3:#94969C;    --cc-fg-off:#61646C;
+  --cc-fg-inv:#0C0E12;
+  --cc-line-subtle:#1F222A; --cc-line:#26292F;   --cc-line-strong:#3A3E47;
+  --cc-accent:#8B6DFF;   --cc-accent-hover:#9B7CFF; --cc-accent-subtle:#241C3D; --cc-accent-fg:#BCA8FF;
+  --cc-ok:#47CD89;  --cc-ok-bg:#053321;  --cc-ok-fg:#A9EFC5;
+  --cc-warn:#FDB022;--cc-warn-bg:#7A2E0E;--cc-warn-fg:#FEDF89;
+  --cc-bad:#F97066; --cc-bad-bg:#7A271A; --cc-bad-fg:#FECDCA;
+  --cc-info:#53B1FD;--cc-info-bg:#102A56;--cc-info-fg:#B2DDFF;
+  --cc-idle:#94969C;
+  --cc-viz:#9B7CFF; --cc-viz-fill:rgba(155,124,255,.20); --cc-viz-grid:#26292F;
+  --cc-series-1:#3987e5; --cc-series-2:#d95926;   /* dark steps of the same two hues */
+  --cc-shadow-1:none; --cc-shadow-2:0 4px 12px rgba(0,0,0,.4); --cc-shadow-3:0 12px 32px rgba(0,0,0,.48);
+}
+
+/* ═══════════════════════════ base ═══════════════════════════ */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--cc-canvas);color:var(--cc-fg);
+  font:400 14px/20px Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01"}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:13px;font-weight:500}
+.num{font-variant-numeric:tabular-nums}
+button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
+input,select,textarea{font:inherit;color:inherit}
+a{color:var(--cc-accent-fg);text-decoration:none}
+:focus-visible{outline:2px solid var(--cc-accent);outline-offset:2px;border-radius:var(--cc-r-md)}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.skip{position:absolute;left:8px;top:-48px;z-index:99;background:var(--cc-accent);color:#fff;
+  padding:8px 16px;border-radius:var(--cc-r-md);transition:top var(--cc-fast)}
+.skip:focus{top:8px}
+
+/* ═══════════════════════════ shell ═══════════════════════════ */
+.app{display:grid;grid-template-columns:var(--cc-sidebar) 1fr;min-height:100vh}
+.app[data-rail="1"]{--cc-sidebar:64px}
+.side{background:var(--cc-card);border-right:1px solid var(--cc-line);display:flex;flex-direction:column;
+  height:100vh;position:sticky;top:0;overflow:hidden}
+.side-top{display:flex;align-items:center;justify-content:space-between;gap:8px;height:var(--cc-topbar);
+  padding:0 12px 0 16px;flex:0 0 auto}
+.wordmark{font-size:19px;font-weight:600;letter-spacing:-.03em;white-space:nowrap}
+.wordmark i{color:var(--cc-accent);font-style:normal}
+.side-scroll{flex:1 1 auto;overflow-y:auto;padding:0 12px 12px;scrollbar-width:thin}
+.grp{width:100%;display:flex;align-items:center;justify-content:space-between;height:28px;padding:0 10px;
+  margin-top:12px;color:var(--cc-fg-3);font-size:12px;line-height:18px;font-weight:500;letter-spacing:.02em;
+  text-transform:uppercase;border-radius:var(--cc-r-sm)}
+.nav{display:flex;flex-direction:column;gap:2px;margin-top:2px}
+.item{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:var(--cc-r-md);
+  color:var(--cc-fg-2);font-weight:500;white-space:nowrap;width:100%;text-align:left;
+  transition:background var(--cc-fast),color var(--cc-fast)}
+.item:hover{background:var(--cc-hover);color:var(--cc-fg)}
+.item[aria-current="page"]{background:var(--cc-selected);color:var(--cc-fg)}
+.item svg{flex:0 0 20px}
+.item .tag{margin-left:auto;font-size:11px;color:var(--cc-fg-3);font-variant-numeric:tabular-nums}
+/* Rail labels are CLIPPED, not display:none — display:none strips the accessible name. */
+.app[data-rail="1"] .item span,.app[data-rail="1"] .grp span{position:absolute;width:1px;height:1px;
+  overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.app[data-rail="1"] .wordmark span{display:none}
+.app[data-rail="1"] .item{justify-content:center;padding:0}
+.app[data-rail="1"] .grp{height:1px;padding:0;margin:12px 0;background:var(--cc-line-subtle)}
+.app[data-rail="1"] .side-top{flex-direction:column;gap:4px;height:auto;padding:8px 0 4px;justify-content:center}
+.app[data-rail="0"] .ico-open{display:none}
+.app[data-rail="1"] .ico-close{display:none}
+
+.main{display:flex;flex-direction:column;min-width:0}
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;height:var(--cc-topbar);
+  padding:0 24px;background:var(--cc-card);border-bottom:1px solid var(--cc-line)}
+.crumb{font-size:16px;line-height:24px;font-weight:600;flex:1;min-width:0}
+.crumb em{font-style:normal;color:var(--cc-fg-3);font-weight:400}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;
+  border-radius:var(--cc-r-md);color:var(--cc-fg-3);transition:background var(--cc-fast),color var(--cc-fast)}
+.icon-btn:hover{background:var(--cc-hover);color:var(--cc-fg-2)}
+.pill{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;
+  border:1px solid var(--cc-line);border-radius:var(--cc-r-full);background:var(--cc-card);white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:var(--cc-r-full);background:var(--cc-ok);flex:0 0 8px}
+.dot.warn{background:var(--cc-warn)} .dot.bad{background:var(--cc-bad)} .dot.idle{background:var(--cc-idle)}
+
+/* ═══════════════════════════ page ═══════════════════════════ */
+.page{padding:24px;display:flex;flex-direction:column;gap:24px}
+.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+h1{margin:0;font-size:30px;line-height:38px;font-weight:600;letter-spacing:-.02em}
+h1 + p{margin:4px 0 0;color:var(--cc-fg-3)}
+.head-actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 16px;
+  border-radius:var(--cc-r-md);font-weight:500;white-space:nowrap;
+  transition:background var(--cc-fast),border-color var(--cc-fast),color var(--cc-fast),transform 80ms}
+.btn:active{transform:scale(.98)}
+.btn.sm{height:32px;padding:0 12px;font-size:13px}
+.btn.primary{background:var(--cc-accent);color:#fff}
+.btn.primary:hover{background:var(--cc-accent-hover)}
+.btn.secondary{background:var(--cc-card);border:1px solid var(--cc-line);color:var(--cc-fg-2)}
+.btn.secondary:hover{background:var(--cc-hover);border-color:var(--cc-line-strong);color:var(--cc-fg)}
+.btn.danger{background:var(--cc-bad);color:#fff}
+.btn.ghost{color:var(--cc-accent-fg)}
+.btn.ghost:hover{background:var(--cc-hover)}
+.btn[disabled]{opacity:.38;pointer-events:none}
+
+.grid{display:grid;gap:24px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.card{background:var(--cc-card);border:1px solid var(--cc-line);border-radius:var(--cc-r-lg);padding:24px}
+.card.tight{padding:0;overflow:hidden}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.card-head h2{margin:0;font-size:20px;line-height:30px;font-weight:600;letter-spacing:-.01em}
+.card-head p{margin:2px 0 0;font-size:12px;line-height:18px;color:var(--cc-fg-3)}
+
+.tile{display:flex;align-items:center;gap:16px;min-height:96px;padding:20px;border:1px solid var(--cc-line);
+  border-radius:var(--cc-r-lg);background:var(--cc-card)}
+.tile .ico{width:40px;height:40px;flex:0 0 40px;display:grid;place-items:center;border-radius:var(--cc-r-md)}
+.tile .lbl{font-size:12px;line-height:18px;color:var(--cc-fg-3)}
+.tile .val{font-size:24px;line-height:32px;font-weight:600;letter-spacing:-.01em;margin-top:2px;
+  font-variant-numeric:tabular-nums}
+.tile .sub{font-size:12px;color:var(--cc-fg-3);margin-top:2px}
+.ico.ok{background:var(--cc-ok-bg);color:var(--cc-ok)}
+.ico.acc{background:var(--cc-accent-subtle);color:var(--cc-accent)}
+.ico.info{background:var(--cc-info-bg);color:var(--cc-info)}
+.ico.warn{background:var(--cc-warn-bg);color:var(--cc-warn)}
+
+/* ═══════════════════════════ table ═══════════════════════════ */
+table{width:100%;border-collapse:collapse}
+thead th{height:44px;padding:0 20px;text-align:left;background:var(--cc-sunken);font-size:12px;line-height:18px;
+  font-weight:500;letter-spacing:.02em;color:var(--cc-fg-3);border-bottom:1px solid var(--cc-line)}
+tbody td{height:52px;padding:0 20px;border-bottom:1px solid var(--cc-line-subtle);color:var(--cc-fg-2)}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background var(--cc-fast)}
+tbody tr:hover{background:var(--cc-hover)}
+td.id{font-weight:500;color:var(--cc-fg)}
+td.right,th.right{text-align:right}
+tr.tot td{font-weight:700;background:var(--cc-sunken)}
+
+.status{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:var(--cc-r-full);
+  font-size:12px;line-height:18px;font-weight:500}
+.status.ok{background:var(--cc-ok-bg);color:var(--cc-ok-fg)}
+.status.run{background:var(--cc-accent-subtle);color:var(--cc-accent-fg)}
+.status.warn{background:var(--cc-warn-bg);color:var(--cc-warn-fg)}
+.status.bad{background:var(--cc-bad-bg);color:var(--cc-bad-fg)}
+.status.idle{background:var(--cc-hover);color:var(--cc-fg-2)}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:var(--cc-r-sm);
+  border:1px solid var(--cc-line);background:var(--cc-sunken);font-size:12px;line-height:18px;color:var(--cc-fg-2)}
+
+/* ═════════════════ the four states (06-ux-rules.md) ═════════════════ */
+/* Skeletons, not spinners, for anything with a known shape. Never a placeholder zero. */
+.sk{background:linear-gradient(90deg,var(--cc-hover) 25%,var(--cc-line-subtle) 37%,var(--cc-hover) 63%);
+  background-size:400% 100%;animation:skw 1.4s ease infinite;border-radius:var(--cc-r-sm);color:transparent!important}
+@keyframes skw{0%{background-position:100% 50%}100%{background-position:0 50%}}
+.sk-line{height:12px;margin:6px 0}
+.empty{padding:48px 24px;text-align:center;color:var(--cc-fg-3)}
+.empty h3{margin:0 0 6px;font-size:16px;font-weight:600;color:var(--cc-fg)}
+.err{border:1px solid var(--cc-bad);background:var(--cc-bad-bg);color:var(--cc-bad-fg);
+  border-radius:var(--cc-r-md);padding:12px 16px;display:flex;align-items:center;gap:12px}
+.err .mono{opacity:.8}
+.spin{width:14px;height:14px;border:2px solid var(--cc-line);border-top-color:var(--cc-accent);
+  border-radius:50%;display:inline-block;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ═══════════════════════════ bars / forms / toast ═══════════════════════════ */
+.bars{display:flex;flex-direction:column;gap:10px}
+.barrow{display:flex;align-items:center;gap:12px}
+.barrow .k{flex:0 0 130px;font-size:13px;color:var(--cc-fg-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.barrow .t{flex:1;height:8px;background:var(--cc-hover);border-radius:var(--cc-r-full);overflow:hidden}
+.barrow .t i{display:block;height:100%;background:var(--cc-viz);border-radius:var(--cc-r-full)}
+.barrow .v{flex:0 0 56px;text-align:right;font-size:12px;color:var(--cc-fg-3);font-variant-numeric:tabular-nums}
+
+.field{display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border:1px solid var(--cc-line);
+  border-radius:var(--cc-r-md);background:var(--cc-card);color:var(--cc-fg)}
+.field:hover{border-color:var(--cc-line-strong)}
+input.field,select.field,textarea.field{width:100%}
+label.lbl{display:block;font-size:12px;color:var(--cc-fg-3);margin-bottom:6px}
+.formrow{display:flex;flex-direction:column;gap:20px;max-width:560px}
+
+.toast{position:fixed;right:24px;bottom:24px;z-index:60;background:var(--cc-card);border:1px solid var(--cc-line);
+  box-shadow:var(--cc-shadow-3);border-radius:var(--cc-r-md);padding:12px 16px;max-width:420px;display:none}
+.toast.on{display:block}
+.toast.bad{border-color:var(--cc-bad)}
+.panel{display:none} .panel.on{display:flex;flex-direction:column;gap:24px}
+
+/* Navigation progress. A click must show it landed even when the new page takes a
+   moment — but blanking the content to prove it is what made this app flicker. A 2px
+   bar changes no layout and answers "did that register?" on its own. */
+#navbar-progress{position:fixed;left:0;top:0;height:2px;width:0;z-index:80;
+  background:var(--cc-accent);opacity:0;transition:width 180ms ease,opacity 220ms}
+#navbar-progress.on{opacity:1}
+
+/* ═══════════════════════ node graph (shared/nodegraph.js) ═══════════════════════
+   A dot-grid canvas on the sunken surface: reads as a technical workspace in light mode
+   and as ComfyUI in dark, without either theme needing its own palette. */
+.ng-canvas{position:relative;overflow:hidden;height:340px;border-radius:var(--cc-r-md);
+  border:1px solid var(--cc-line);background-color:var(--cc-sunken);
+  background-image:radial-gradient(var(--cc-line-strong) 1px, transparent 1px);
+  background-size:22px 22px;touch-action:none;user-select:none}
+.ng-viewport{position:absolute;left:0;top:0;transform-origin:0 0}
+.ng-edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+.ng-nodes{position:absolute;left:0;top:0}
+.ng-node{position:absolute;background:var(--cc-card);border:1px solid var(--cc-line);
+  border-radius:var(--cc-r-md);padding:8px 10px;box-shadow:var(--cc-shadow-1);cursor:pointer;
+  transition:border-color var(--cc-fast),box-shadow var(--cc-fast)}
+.ng-node:hover{border-color:var(--cc-accent);box-shadow:var(--cc-shadow-2)}
+.ng-node:focus-visible{outline:2px solid var(--cc-accent);outline-offset:2px}
+.ng-title{display:flex;align-items:center;gap:6px;font-weight:500;font-size:13px;color:var(--cc-fg)}
+.ng-dot{width:8px;height:8px;border-radius:var(--cc-r-full);flex:0 0 8px}
+.ng-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ng-sub{font-size:11px;color:var(--cc-fg-3);margin-top:2px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ng-meta{margin-top:6px;display:flex;flex-direction:column;gap:2px}
+.ng-bar{height:4px;background:var(--cc-hover);border-radius:var(--cc-r-full);margin-top:7px;overflow:hidden}
+.ng-bar i{display:block;height:100%;background:var(--cc-accent);border-radius:var(--cc-r-full);
+  transition:width var(--cc-base)}
+.ng-hint{position:absolute;right:8px;bottom:6px;font-size:11px;color:var(--cc-fg-3);
+  background:var(--cc-card);border:1px solid var(--cc-line);border-radius:var(--cc-r-sm);
+  padding:1px 6px;pointer-events:none;opacity:.85}
+
+/* ═══════════════════════════ responsive ═══════════════════════════
+   Desktop-first, per the template. The rail below 1024px is set from JS state so the
+   user's own toggle can still win; only the <=768px drawer is a CSS mode switch. */
+.hamburger{display:none}
+.scrim{position:fixed;inset:0;background:rgba(16,24,40,.32);z-index:29;display:none}
+.app[data-drawer="1"] .scrim{display:block}
+
+@media (max-width:1200px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:980px){.g2,.g3{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:768px){
+  .hamburger{display:inline-flex}
+  .app,.app[data-rail="1"]{grid-template-columns:1fr}
+  .side{position:fixed;left:0;top:0;bottom:0;width:264px;z-index:30;
+        transform:translateX(-100%);transition:transform var(--cc-base);
+        box-shadow:var(--cc-shadow-3)}
+  .app[data-drawer="1"] .side{transform:none}
+  /* the drawer always shows labels, whatever the desktop rail state was */
+  .app[data-rail="1"] .side{--cc-sidebar:264px}
+  .app[data-rail="1"] .item span,.app[data-rail="1"] .grp span{position:static;width:auto;height:auto;clip:auto}
+  .app[data-rail="1"] .item{justify-content:flex-start;padding:0 12px}
+  .app[data-rail="1"] .grp{height:28px;padding:0 10px;margin-top:12px;background:none}
+  .app[data-rail="1"] .wordmark span{display:inline}
+  .app[data-rail="1"] .side-top{flex-direction:row;height:var(--cc-topbar);padding:0 12px 0 16px}
+  .page{padding:16px;gap:16px}
+  h1{font-size:24px;line-height:32px}
+  .g4{grid-template-columns:minmax(0,1fr)}
+  .tile{min-height:auto;padding:16px}
+  .card{padding:16px}
+  /* wide content scrolls inside its own box; the page never scrolls sideways */
+  .card.tight{overflow-x:auto}
+  table{min-width:560px}
+}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:1ms!important;animation-duration:1ms!important}}
+
+/* ═══════════════ pipeline editor — interactive nodes (Rete v2) ═══════════════
+   The stock Rete node is a title and a socket list. These nodes carry their own
+   parameters, status and output, so the graph is the control surface rather than a
+   picture of one. Rete's Vue preset injects its own scoped styles at runtime; we
+   override only the canvas and supply the node look ourselves. */
+.pipe-wrap{position:relative;height:calc(100vh - var(--cc-topbar) - 116px);min-height:420px;
+  border:1px solid var(--cc-line);border-radius:var(--cc-r-lg);overflow:hidden;
+  background:var(--cc-sunken);
+  background-image:radial-gradient(circle at 1px 1px,var(--cc-line) 1px,transparent 0);
+  background-size:22px 22px}
+.pipe-canvas{width:100%;height:100%}
+.pipe-canvas .rete-connection path,.pipe-canvas svg path{stroke:var(--cc-line-strong);stroke-width:2.5;fill:none}
+
+.pn{background:var(--cc-card);border:1px solid var(--cc-line);border-radius:var(--cc-r-lg);
+  box-shadow:var(--cc-shadow-2);font-size:13px;color:var(--cc-fg);user-select:none;
+  transition:border-color var(--cc-fast),box-shadow var(--cc-fast)}
+.pn.sel{border-color:var(--cc-accent);box-shadow:0 0 0 3px var(--cc-accent-subtle),var(--cc-shadow-2)}
+.pn-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--cc-line-subtle);
+  cursor:grab}
+.pn-head:active{cursor:grabbing}
+.pn-ico{font-size:15px;line-height:1}
+.pn-title{font-weight:600;letter-spacing:-.01em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pn-dot{width:8px;height:8px;border-radius:var(--cc-r-full);background:var(--cc-idle);flex:0 0 8px}
+.st-running .pn-dot{background:var(--cc-accent);animation:pnpulse 1.2s ease-in-out infinite}
+.st-done .pn-dot{background:var(--cc-ok)}
+.st-error .pn-dot{background:var(--cc-bad)}
+.st-queued .pn-dot{background:var(--cc-warn)}
+@keyframes pnpulse{50%{opacity:.35}}
+.pn.st-running{border-color:var(--cc-accent)}
+.pn.st-error{border-color:var(--cc-bad)}
+
+.pn-ports{display:flex;justify-content:space-between;padding:8px 0;gap:12px}
+.pn-in,.pn-out{display:flex;flex-direction:column;gap:6px}
+.pn-out{align-items:flex-end}
+.pn-port{display:flex;align-items:center;gap:6px}
+.pn-plabel{font-size:11px;color:var(--cc-fg-3);letter-spacing:.02em}
+.pn-sock{display:block}
+/* Rete renders the socket element inside our Ref wrapper; size the hit area generously
+   because dragging a 10px target on a laptop trackpad is genuinely hard. */
+.pn-sock>*{width:14px!important;height:14px!important;border-radius:var(--cc-r-full)!important;
+  background:var(--cc-accent)!important;border:2px solid var(--cc-card)!important;
+  box-shadow:0 0 0 1px var(--cc-line-strong);margin:0!important;cursor:crosshair}
+.pn-in .pn-sock{margin-left:-7px!important}
+.pn-out .pn-sock{margin-right:-7px!important}
+.pn-sock>*:hover{box-shadow:0 0 0 4px var(--cc-accent-subtle)}
+
+.pn-body{padding:2px 12px 10px;display:flex;flex-direction:column;gap:8px}
+.pn-field{display:flex;flex-direction:column;gap:3px}
+.pn-lbl{font-size:11px;color:var(--cc-fg-3);display:flex;align-items:center;gap:4px}
+.pn-lbl i{font-style:normal;width:13px;height:13px;border-radius:var(--cc-r-full);
+  background:var(--cc-hover);color:var(--cc-fg-3);font-size:9px;display:grid;place-items:center;cursor:help}
+.pn-input{width:100%;height:30px;padding:0 8px;border:1px solid var(--cc-line);
+  border-radius:var(--cc-r-sm);background:var(--cc-sunken);color:var(--cc-fg);font:inherit;font-size:12px}
+.pn-input:focus{outline:2px solid var(--cc-accent);outline-offset:-1px;border-color:transparent}
+.pn-toggle{width:34px;height:20px;border-radius:var(--cc-r-full);background:var(--cc-line-strong);
+  position:relative;cursor:pointer;transition:background var(--cc-fast)}
+.pn-toggle i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:var(--cc-r-full);
+  background:#fff;transition:transform var(--cc-fast)}
+.pn-toggle.on{background:var(--cc-accent)}
+.pn-toggle.on i{transform:translateX(14px)}
+
+.pn-foot{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--cc-line-subtle);
+  background:var(--cc-sunken);border-radius:0 0 var(--cc-r-lg) var(--cc-r-lg)}
+.pn-msg{flex:1;min-width:0;font-size:11px;color:var(--cc-fg-3);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.pn-open{font-size:11px;padding:3px 8px;border-radius:var(--cc-r-sm);border:1px solid var(--cc-line);
+  background:var(--cc-card);color:var(--cc-fg-2);cursor:pointer}
+.pn-open:hover{background:var(--cc-hover);color:var(--cc-fg)}
+.pn-bar{height:3px;background:var(--cc-hover);border-radius:0 0 var(--cc-r-lg) var(--cc-r-lg);overflow:hidden}
+.pn-bar i{display:block;height:100%;background:var(--cc-viz);transition:width var(--cc-base)}
+
+/* palette + toolbar */
+.pipe-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.pipe-bar .sp{flex:1}
+.palette{position:absolute;left:12px;top:12px;z-index:5;background:var(--cc-card);
+  border:1px solid var(--cc-line);border-radius:var(--cc-r-lg);box-shadow:var(--cc-shadow-2);
+  padding:8px;width:180px;max-height:calc(100% - 24px);overflow:auto}
+.palette h4{margin:6px 4px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--cc-fg-3);font-weight:500}
+.palette button{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border-radius:var(--cc-r-sm);
+  font-size:12px;color:var(--cc-fg-2);text-align:left}
+.palette button:hover{background:var(--cc-hover);color:var(--cc-fg)}
+.palette[hidden]{display:none}
+
+/* node output drawer */
+.nodeout{position:absolute;right:0;top:0;bottom:0;width:min(460px,92%);z-index:8;
+  background:var(--cc-card);border-left:1px solid var(--cc-line);box-shadow:var(--cc-shadow-3);
+  display:flex;flex-direction:column;transform:translateX(100%);transition:transform var(--cc-base)}
+.nodeout.on{transform:none}
+.nodeout header{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--cc-line)}
+.nodeout header h3{margin:0;font-size:15px;font-weight:600;flex:1}
+.nodeout .body{flex:1;overflow:auto;padding:16px}
+.nodeout table{font-size:12px}
+.nodeout thead th{height:34px;padding:0 10px}
+.nodeout tbody td{height:34px;padding:0 10px}
+@media (max-width:768px){.palette{width:150px}.pipe-wrap{height:70vh}}
+
+/* ═══════ stage list, activity feed, crop review — used by the Lab ═══════ */
+.stages{display:flex;flex-direction:column;gap:8px}
+.stage{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--cc-line);
+  border-radius:var(--cc-r-md);background:var(--cc-card)}
+.stage .nm{width:88px;flex:0 0 88px;font-weight:500;color:var(--cc-fg);text-transform:capitalize}
+.stage .bar{flex:1;height:6px;min-width:60px;border-radius:var(--cc-r-full);background:var(--cc-hover);overflow:hidden}
+.stage .bar i{display:block;height:100%;background:var(--cc-viz);border-radius:var(--cc-r-full);
+  transition:width var(--cc-base)}
+.stage .msg{flex:0 0 auto;max-width:46%;text-align:right;font-size:12px;color:var(--cc-fg-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stage .cost{flex:0 0 68px;text-align:right;font-size:12px;color:var(--cc-fg-3);font-variant-numeric:tabular-nums}
+.stage[data-s="done"] .bar i{background:var(--cc-ok)}
+.stage[data-s="error"] .bar i{background:var(--cc-bad);width:100%!important}
+.stage[data-s="running"]{border-color:var(--cc-accent)}
+
+.feed{display:flex;flex-direction:column;gap:8px}
+.event{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--cc-card);
+  border:1px solid var(--cc-line);border-radius:var(--cc-r-md)}
+.event .txt{flex:1;min-width:0}
+.event .txt b{font-weight:500;color:var(--cc-fg)}
+.event time{font-size:12px;color:var(--cc-fg-3);font-variant-numeric:tabular-nums}
+
+.crops{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.cropimg{max-height:280px;max-width:340px;border:1px solid var(--cc-line);
+  border-radius:var(--cc-r-md);background:var(--cc-sunken)}
+.ctximg{max-height:280px;max-width:520px;border:1px solid var(--cc-line);border-radius:var(--cc-r-md)}
+.classgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px}
+
+/* ═════════ coverage grid — minutes of footage per clock hour ═════════
+   A single measure (how much of the hour is covered), so colour carries magnitude only
+   and one hue is stepped light->dark. No categorical palette here: the day and hour
+   labels already carry identity, and a rainbow would imply differences that do not exist. */
+.cvgrid{border-collapse:separate;border-spacing:2px;width:auto}
+.cvgrid thead th{height:auto;padding:2px 0;background:none;border:0;font-size:10px;
+  color:var(--cc-fg-3);text-align:center;min-width:22px;font-weight:500}
+.cvgrid tbody th{padding:0 10px 0 0;background:none;border:0;font-size:11px;
+  color:var(--cc-fg-2);text-align:right;white-space:nowrap;font-weight:500}
+.cvgrid td.cv{height:22px;min-width:22px;padding:0;border-radius:3px;text-align:center;
+  font-size:9px;font-variant-numeric:tabular-nums;border:0}
+.cv0{background:var(--cc-hover)}
+.cv1{background:color-mix(in srgb,var(--cc-viz) 28%,var(--cc-card));color:var(--cc-fg-2)}
+.cv2{background:color-mix(in srgb,var(--cc-viz) 58%,var(--cc-card));color:var(--cc-fg-inv)}
+.cv3{background:var(--cc-viz)}
+.cvkey{display:flex;gap:16px;margin-top:12px;font-size:11px;color:var(--cc-fg-3)}
+.cvkey span{display:flex;align-items:center;gap:5px}
+.cvkey i{width:11px;height:11px;border-radius:2px;display:inline-block}
+
+/* ═══════════ exhaustive box labelling (gold set) ═══════════ */
+.bl{display:flex;flex-direction:column;gap:12px}
+.bl-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.bl-hint{font-size:12px;color:var(--cc-fg-3)}
+.bl-count{font-size:13px;font-weight:500;color:var(--cc-fg-2);font-variant-numeric:tabular-nums}
+kbd{display:inline-block;padding:1px 5px;border:1px solid var(--cc-line-strong);border-bottom-width:2px;
+  border-radius:4px;background:var(--cc-sunken);font:500 10px ui-monospace,monospace;color:var(--cc-fg-2)}
+.bl-stage{position:relative;border:1px solid var(--cc-line);border-radius:var(--cc-r-lg);
+  overflow:hidden;background:var(--cc-sunken);line-height:0}
+.bl-stage canvas{max-width:100%;cursor:crosshair;touch-action:none;display:block;margin:0 auto}
+/* Deliberately NOT an overlay. Hiding the model's boxes is the point; hiding the frame
+   would stop the reviewer doing the sweep the whole method depends on. */
+.bl-note{padding:8px 12px;border:1px solid var(--cc-line);border-left:3px solid var(--cc-accent);
+  border-radius:var(--cc-r-sm);background:var(--cc-accent-subtle);color:var(--cc-accent-fg);
+  font-size:12px;line-height:18px}
+.bl-classes{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:6px}
+.bl-cls{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--cc-line);
+  border-radius:var(--cc-r-sm);background:var(--cc-card);color:var(--cc-fg-2);font-size:12px;text-align:left}
+.bl-cls:hover{background:var(--cc-hover);color:var(--cc-fg)}
+.bl-cls.on{border-color:var(--cc-accent);background:var(--cc-accent-subtle);color:var(--cc-accent-fg)}
+
+/* The caption burned into DVR footage — the only reliable statement of where it came
+   from, so it is shown as evidence next to the station decision rather than described. */
+.wmstrip{height:38px;max-width:300px;object-fit:contain;object-position:center;
+  border:1px solid var(--cc-line);border-radius:4px;background:#000;display:block}
+.wmstrip:hover{transform:scale(2.2);transform-origin:left center;position:relative;z-index:5;
+  box-shadow:var(--cc-shadow-3)}
+
+/* ═════════ count-line editor ═════════ */
+.le{display:flex;flex-direction:column;gap:12px}
+.le-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.le-bar .btn.armed{background:var(--cc-ok);color:#fff}
+.le-stage{border:1px solid var(--cc-line);border-radius:var(--cc-r-lg);overflow:hidden;
+  background:var(--cc-sunken);line-height:0}
+.le-stage canvas{max-width:100%;cursor:crosshair;touch-action:none;display:block;margin:0 auto}
+.le-list{display:flex;flex-direction:column;gap:6px}
+.le-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--cc-line);
+  border-radius:var(--cc-r-md);background:var(--cc-card);cursor:pointer}
+.le-row:hover{background:var(--cc-hover)}
+.le-row.on{border-color:var(--cc-accent);background:var(--cc-accent-subtle)}
+.le-dot{width:10px;height:10px;border-radius:50%;background:#2E6BE6;flex:0 0 10px}
+.le-row.on .le-dot{background:#DC6803}
+
+/* ═════════ report card ═════════ */
+.rc-checks{display:flex;flex-direction:column;gap:8px}
+.rc-check{display:flex;gap:10px;padding:12px 14px;border:1px solid var(--cc-line);
+  border-radius:var(--cc-r-md);background:var(--cc-card)}
+.rc-check.ok{border-left:3px solid var(--cc-ok)}
+.rc-check.warn{border-left:3px solid var(--cc-warn)}
+.rc-check.bad{border-left:3px solid var(--cc-bad)}
+.rc-check b{font-weight:500;color:var(--cc-fg)}
+.rc-check p{margin:3px 0 0;font-size:12px;color:var(--cc-fg-3)}
+/* Two series (in/out) and only two — the validated pair, never the categorical ramp. */
+.rc-legend{display:flex;gap:16px;font-size:12px;color:var(--cc-fg-2);margin-top:10px}
+.rc-legend span{display:flex;align-items:center;gap:6px}
+.rc-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.rc-split{display:flex;height:26px;border-radius:var(--cc-r-sm);overflow:hidden;
+  border:1px solid var(--cc-line)}
+.rc-split i{display:block;height:100%}
+.rc-split i:first-child{background:var(--cc-series-1)}
+.rc-split i:last-child{background:var(--cc-series-2)}
+
+/* A period with only part of its footage present. Texture, not colour alone — the
+   count is real but not comparable to a full period, and that must survive a
+   greyscale print and a colour-blind reader. */
+.col-partial{background-image:repeating-linear-gradient(45deg,
+  rgba(255,255,255,.55) 0 3px, transparent 3px 6px)!important}
+
+/* Breadcrumb parents are links. They looked like plain text before, so the obvious
+   way back up did nothing when clicked. */
+.crumb a{color:var(--cc-fg-3);text-decoration:none;border-radius:4px;padding:1px 3px}
+.crumb a:hover{color:var(--cc-fg);background:var(--cc-hover)}
+.crumb span{color:var(--cc-fg)}
+.le-status{font-size:12px;color:var(--cc-fg-3);font-variant-numeric:tabular-nums}
+.le-status.ok{color:var(--cc-ok)}
+.le-status.bad{color:var(--cc-bad)}
+
+/* ═══════════ list view: search · filter · sort · table/grid ═══════════ */
+.lv-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:16px 20px;
+  border-bottom:1px solid var(--cc-line)}
+.lv-search{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;min-width:210px;
+  border:1px solid var(--cc-line);border-radius:var(--cc-r-md);background:var(--cc-card);
+  color:var(--cc-fg-3)}
+.lv-search:focus-within{border-color:var(--cc-accent);box-shadow:0 0 0 3px var(--cc-accent-subtle)}
+.lv-search input{border:0;background:none;outline:none;color:var(--cc-fg);font:inherit;
+  font-size:13px;width:100%;min-width:0}
+.lv-search input::-webkit-search-cancel-button{cursor:pointer}
+
+.lv-chips{display:flex;gap:6px;flex-wrap:wrap}
+.lv-chip{height:28px;padding:0 11px;border-radius:var(--cc-r-full);border:1px solid var(--cc-line);
+  background:var(--cc-card);color:var(--cc-fg-2);font-size:12px;font-weight:500;white-space:nowrap;
+  transition:background var(--cc-fast),border-color var(--cc-fast),color var(--cc-fast)}
+.lv-chip:hover{background:var(--cc-hover);color:var(--cc-fg)}
+.lv-chip.on{background:var(--cc-accent-subtle);border-color:var(--cc-accent);color:var(--cc-accent-fg)}
+
+.lv-sort{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--cc-fg-3)}
+.lv-sort .field.sm{height:30px;padding:0 8px;font-size:12px;width:auto}
+.icon-btn.sm{width:30px;height:30px;border:1px solid var(--cc-line);border-radius:var(--cc-r-sm);
+  font-size:13px;color:var(--cc-fg-2)}
+
+.lv-toggle{display:flex;border:1px solid var(--cc-line);border-radius:var(--cc-r-md);overflow:hidden}
+.lv-toggle button{width:34px;height:30px;display:grid;place-items:center;color:var(--cc-fg-3);
+  background:var(--cc-card);transition:background var(--cc-fast),color var(--cc-fast)}
+.lv-toggle button + button{border-left:1px solid var(--cc-line)}
+.lv-toggle button:hover{background:var(--cc-hover);color:var(--cc-fg-2)}
+.lv-toggle button.on{background:var(--cc-selected);color:var(--cc-fg)}
+
+.lv-count{font-size:12px;color:var(--cc-fg-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.lv-table{overflow-x:auto}
+th.lv-sortable{cursor:pointer;user-select:none}
+th.lv-sortable:hover{color:var(--cc-fg)}
+
+.lv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;padding:20px}
+.lv-card{border:1px solid var(--cc-line);border-radius:var(--cc-r-lg);background:var(--cc-card);
+  padding:18px;display:flex;flex-direction:column;gap:10px;
+  transition:border-color var(--cc-fast),box-shadow var(--cc-fast)}
+.lv-card:hover{border-color:var(--cc-line-strong);box-shadow:var(--cc-shadow-2)}
+.lv-card h3{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.lv-card .sub{font-size:12px;color:var(--cc-fg-3);margin-top:-6px}
+.lv-card dl{display:grid;grid-template-columns:1fr auto;gap:5px 12px;margin:0;font-size:12px}
+.lv-card dt{color:var(--cc-fg-3)}
+.lv-card dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;color:var(--cc-fg)}
+@media (max-width:640px){.lv-bar{gap:8px}.lv-search{min-width:100%;order:-1}}
+
+/* ═══════════ station card: a project, not a row of counts ═══════════ */
+.st-card{border:1px solid var(--cc-line);border-radius:var(--cc-r-lg);background:var(--cc-card);
+  overflow:hidden;display:flex;flex-direction:column;
+  transition:border-color var(--cc-fast),box-shadow var(--cc-fast)}
+.st-card:hover{border-color:var(--cc-line-strong);box-shadow:var(--cc-shadow-2)}
+.st-thumb{aspect-ratio:16/9;background:var(--cc-sunken);position:relative;overflow:hidden}
+.st-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.st-thumb .none{position:absolute;inset:0;display:grid;place-items:center;
+  color:var(--cc-fg-off);font-size:12px}
+.st-thumb .code{position:absolute;left:10px;bottom:10px;padding:3px 9px;border-radius:var(--cc-r-sm);
+  background:rgba(12,14,18,.72);color:#fff;font-size:12px;font-weight:600;letter-spacing:.01em;
+  backdrop-filter:blur(3px)}
+.st-body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:12px;flex:1}
+.st-body h3{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.st-body .where{font-size:12px;color:var(--cc-fg-3);margin-top:-8px}
+.st-stats{display:flex;gap:18px;font-size:12px;color:var(--cc-fg-3)}
+.st-stats b{display:block;font-size:15px;font-weight:600;color:var(--cc-fg);
+  font-variant-numeric:tabular-nums}
+
+/* Progress: one segment per stage, in order. Colour alone never carries it — the
+   count is written out and every segment has a tooltip naming its state. */
+.st-track{display:flex;gap:3px}
+.st-track i{flex:1;height:5px;border-radius:2px;background:var(--cc-line);display:block}
+.st-track i.on{background:var(--cc-ok)}
+.st-track i.next{background:var(--cc-warn)}
+.st-prog{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  font-size:12px;color:var(--cc-fg-3)}
+.st-prog b{color:var(--cc-fg-2);font-weight:500}
+.st-next{display:flex;align-items:center;gap:7px;padding:8px 10px;border-radius:var(--cc-r-sm);
+  background:var(--cc-sunken);border:1px solid var(--cc-line-subtle);font-size:12px;
+  color:var(--cc-fg-2)}
+.st-next svg{flex:0 0 14px;color:var(--cc-warn)}
+.st-next.done svg{color:var(--cc-ok)}
+.st-actions{display:flex;gap:6px;margin-top:auto}
+
+/* ═══════════ station workspace ═══════════ */
+.ws-head{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+.ws-shot{width:200px;aspect-ratio:16/9;border-radius:var(--cc-r-lg);overflow:hidden;
+  background:var(--cc-sunken);flex:0 0 200px;border:1px solid var(--cc-line)}
+.ws-shot img{width:100%;height:100%;object-fit:cover;display:block}
+.ws-shot .none{width:100%;height:100%;display:grid;place-items:center;color:var(--cc-fg-off);font-size:12px}
+.ws-id{flex:1;min-width:260px}
+.ws-id h1{margin:0}
+.ws-meta{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:13px;color:var(--cc-fg-3)}
+.ws-meta b{color:var(--cc-fg-2);font-weight:500}
+
+/* Stage rail: the project's spine. Reads left to right, current step marked, and every
+   step says what it is waiting on rather than only whether it is green. */
+.ws-rail{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:4px}
+.ws-step{padding:10px 12px;border:1px solid var(--cc-line);border-radius:var(--cc-r-md);
+  background:var(--cc-card);display:flex;flex-direction:column;gap:4px;min-width:0}
+.ws-step .n{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--cc-fg)}
+.ws-step .d{font-size:11px;color:var(--cc-fg-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws-step .tick{width:15px;height:15px;border-radius:50%;flex:0 0 15px;display:grid;place-items:center;
+  background:var(--cc-hover);color:var(--cc-fg-off);font-size:9px;font-weight:700}
+.ws-step.done{border-color:color-mix(in srgb,var(--cc-ok) 40%,var(--cc-line))}
+.ws-step.done .tick{background:var(--cc-ok);color:#fff}
+.ws-step.now{border-color:var(--cc-warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--cc-warn) 14%,transparent)}
+.ws-step.now .tick{background:var(--cc-warn);color:#fff}
+
+/* Sub-tabs inside the workspace */
+.ws-tabs{display:flex;gap:2px;border-bottom:1px solid var(--cc-line);overflow-x:auto}
+.ws-tabs button{padding:9px 14px;font-size:13px;font-weight:500;color:var(--cc-fg-3);
+  border-bottom:2px solid transparent;white-space:nowrap;
+  transition:color var(--cc-fast),border-color var(--cc-fast)}
+.ws-tabs button:hover{color:var(--cc-fg-2)}
+.ws-tabs button.on{color:var(--cc-accent-fg);border-bottom-color:var(--cc-accent)}
+.ws-tabs button .n{margin-left:6px;font-size:11px;color:var(--cc-fg-off);
+  font-variant-numeric:tabular-nums}
+.ws-tabs button.on .n{color:var(--cc-accent-fg)}
+@media (max-width:900px){.ws-rail{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:560px){.ws-rail{grid-template-columns:repeat(2,1fr)}.ws-shot{flex:0 0 100%;width:100%}}
+
+/* ── evidence grid: an inference, shown rather than asserted ───────────────────
+   Used for implied crossings, where each card is one vehicle the count claims
+   crossed without anyone seeing it. The image is the argument, so it gets the
+   room; the numbers underneath are what you check it against.  */
+.ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));
+  gap:16px;margin-top:16px}
+.ev-card{margin:0;background:var(--cc-surface);border:1px solid var(--cc-border);
+  border-radius:var(--cc-r);overflow:hidden}
+.ev-card img{display:block;width:100%;height:auto;background:var(--cc-surface-sunken)}
+.ev-card figcaption{padding:12px 14px 14px}
+.ev-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px}
+.ev-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;margin:10px 0 0}
+.ev-stats div{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.ev-stats dt{color:var(--cc-fg-3);margin:0}
+.ev-stats dd{margin:0;color:var(--cc-fg);font-variant-numeric:tabular-nums}
+.legend-row{display:flex;flex-wrap:wrap;gap:8px 22px}
+.ev-key{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--cc-fg-2)}
+.ev-key i{width:22px;height:4px;border-radius:2px;flex:none}
+
+/* votes + the answer row on an audit card */
+.votes{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;font-size:12px;color:var(--cc-fg-2)}
+.vote{display:inline-flex;gap:6px}
+.vote em{font-style:normal;color:var(--cc-fg-3)}
+.axle-btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+h2.sec{margin:26px 0 0;font-size:15px;font-weight:600;color:var(--cc-fg)}
+.saved{font-size:12px;color:var(--cc-ok,#3a9d5d);align-self:center;opacity:0;transition:opacity .15s}
+.saved.on{opacity:1}
+.saved.pending{color:var(--cc-fg-3)}
+.saved.failed{color:var(--cc-danger,#c0392b);font-weight:600}
+
+/* one-at-a-time attribute labelling — sized so the answer keys never leave the viewport */
+.attr-stage{padding:20px}
+.attr-imgs{display:grid;grid-template-columns:2fr 1fr;gap:14px;align-items:start}
+.attr-imgs img{width:100%;height:auto;border-radius:var(--cc-r-sm);background:var(--cc-surface-sunken)}
+.attr-imgs img.ctx{opacity:.85}
+.attr-meta{margin:10px 0 0;font-size:12px;color:var(--cc-fg-3)}
+.attr-answers{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.attr-answers kbd{display:inline-block;min-width:16px;padding:1px 5px;margin-right:6px;
+  border-radius:4px;background:rgba(255,255,255,.18);font:inherit;font-size:11px}
+.attr-answers .secondary kbd{background:var(--cc-surface-sunken)}
+@media (max-width:800px){.attr-imgs{grid-template-columns:1fr}.attr-imgs img.ctx{display:none}}
+
+/* raw-dataset flow: sampled -> judged -> yours -> gold, with what is still pending */
+.ds-flow{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.ds-flow > div{display:flex;flex-direction:column}
+.ds-flow .lbl{font-size:11px;color:var(--cc-fg-3)}
+.ds-flow b{font-size:20px;font-weight:650;font-variant-numeric:tabular-nums}
+.ds-flow .sub{font-size:11px;color:var(--cc-fg-3)}
+.ds-flow .arrow{color:var(--cc-fg-3);font-size:18px;align-self:center}
+.ds-flow .pend.on b{color:var(--cc-warn,#b07d0a)}
+.card.fold .card-head{align-items:flex-start}
+
+/* live job row, folded in from the old run page */
+.runrow{display:flex;align-items:center;gap:14px;padding:8px 0}
+.runrow .bar{flex:1;height:6px;border-radius:3px;background:var(--cc-surface-sunken);overflow:hidden}
+.runrow .bar i{display:block;height:100%;background:var(--cc-acc);transition:width .3s}
+.runrow .num{font-variant-numeric:tabular-nums;font-size:12px;color:var(--cc-fg-2);min-width:38px;text-align:right}
+
+/* clip verification — one vehicle at a time, answers under the thumb */
+.vfy-filters{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.vfy-filters .chk{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+.vfy-stage{padding:18px 20px}
+.vfy-imgs{display:grid;grid-template-columns:1fr 1.4fr;gap:14px;align-items:center}
+.vfy-imgs img{width:100%;height:auto;max-height:46vh;object-fit:contain;
+  border-radius:var(--cc-r-sm);background:var(--cc-surface-sunken)}
+.vfy-tag{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 4px}
+.vfy-tag b{font-size:16px}
+.vfy-answers{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.vfy-answers .big{flex:1;min-width:220px;padding:14px}
+.vfy-classes{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;
+  padding-top:10px;border-top:1px solid var(--cc-border)}
+.vfy-answers kbd,.vfy-classes kbd{display:inline-block;padding:1px 5px;border-radius:4px;
+  background:rgba(127,127,127,.2);font:inherit;font-size:11px}
+.btn.ok{background:#1a7f4b;color:#fff;border-color:#1a7f4b}
+.btn.danger{background:#8a3030;color:#fff;border-color:#8a3030}
+.btn.acc{background:#b07d0a;color:#fff;border-color:#b07d0a}
+@media (max-width:820px){.vfy-imgs{grid-template-columns:1fr}.vfy-imgs .ctx{display:none}}
+
+/* clips as cards — the table could not hold four actions plus eight numbers per row */
+.clipgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+  gap:12px;padding:0 20px 18px}
+.clipcard{border:1px solid var(--cc-border);border-radius:var(--cc-r);padding:12px 14px;
+  background:var(--cc-surface)}
+.clipcard.done{border-color:var(--cc-ok,#3a9d5d)}
+.clipcard .ch{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.clipcard .ch .muted{display:block;font-size:11px}
+.clipcard .cnum{margin:6px 0 10px}
+.clipcard .cnum b{font-size:26px;font-weight:650;font-variant-numeric:tabular-nums}
+.clipcard .cnum span{display:block;font-size:11px;color:var(--cc-fg-3)}
+.clipcard .crow{display:flex;justify-content:space-between;gap:8px;font-size:12px;
+  padding:3px 0;border-top:1px solid var(--cc-border)}
+.clipcard .crow b{font-variant-numeric:tabular-nums}
+.clipcard .crow b.good{color:var(--cc-ok,#3a9d5d)}
+.clipcard .crow b.mid{color:var(--cc-warn,#b07d0a)}
+.clipcard .crow b.bad{color:var(--cc-danger,#c0392b)}
+.clipcard .cacts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.geo-results{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+.geo-hit{text-align:left;padding:6px 10px;border:1px solid var(--cc-border);border-radius:6px;
+  background:var(--cc-surface);cursor:pointer;font-size:13px}
+.geo-hit:hover{border-color:var(--cc-acc)}
+.st-map{height:340px;border-radius:var(--cc-r-sm);overflow:hidden;margin-top:8px;
+  border:1px solid var(--cc-border)}
+.modal-wrap{position:fixed;inset:0;background:rgba(10,12,16,.55);z-index:200;
+  display:flex;align-items:flex-start;justify-content:center;padding:4vh 16px;overflow:auto}
+.modal{background:var(--cc-surface);border:1px solid var(--cc-border);
+  border-radius:var(--cc-r);width:min(860px,100%);box-shadow:0 24px 64px rgba(0,0,0,.35)}
+.modal-body{padding:0 20px 20px}
+
+/* ── aliases for token names used by newer rules ────────────────────────────────
+   Several additions this cycle referenced tokens by intuitive names that were never in
+   the system (--cc-surface, --cc-border, --cc-r, --cc-danger). Over the white canvas the
+   resulting transparent backgrounds were invisible; the floating station editor finally
+   made it visible. Aliased to the real tokens rather than rewriting every rule, and
+   defined with var() so the dark theme flows through unchanged. */
+:root, :root[data-theme="dark"] {
+  --cc-surface: var(--cc-card);
+  --cc-surface-sunken: var(--cc-sunken);
+  --cc-border: var(--cc-line);
+  --cc-r: var(--cc-r-md, 10px);
+  --cc-danger: var(--cc-bad);
+  /* --cc-acc was the one this block missed. It fills .runrow .bar i, so a running
+     job's progress bar resolved to transparent and looked exactly like a stalled one. */
+  --cc-acc: var(--cc-accent);
+}
+.bp-dir{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 12px;
+  border:1px solid var(--cc-line);border-radius:8px;background:var(--cc-card);cursor:pointer;
+  margin-bottom:6px;font-size:13px}
+.bp-dir:hover{border-color:var(--cc-accent)}
+
+/* ── station overview: a composed layout, not a stack ────────────────────────────
+   The page only had .g2/.g3/.g4 — equal columns — so every component became another
+   full-width card and the whole screen read as a list of pages. This is a 12-column
+   grid so a panel can take the width it actually needs: the folder card is wide
+   because it holds a file table, the attention column is narrow because it holds
+   counts, and the two time views share one full-width card because they describe the
+   same axis. */
+.ov{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px}
+.ov > *{grid-column:span 12;min-width:0}
+.ov .sp3{grid-column:span 3}
+.ov .sp4{grid-column:span 4}
+.ov .sp5{grid-column:span 5}
+.ov .sp7{grid-column:span 7}
+.ov .sp8{grid-column:span 8}
+.ov .card{margin:0;height:100%}
+/* A short attention list next to a tall folder card should not stretch its rows. */
+.ov .stack{display:flex;flex-direction:column;gap:12px}
+.ov-flag{display:flex;gap:10px;align-items:flex-start;padding:11px 13px;
+  border:1px solid var(--cc-line);border-radius:var(--cc-r-sm);background:var(--cc-canvas)}
+.ov-flag.bad{border-color:var(--cc-bad);background:var(--cc-bad-bg)}
+.ov-flag.warn{border-color:var(--cc-warn);background:var(--cc-warn-bg)}
+.ov-flag .n{font-weight:600;font-size:15px;line-height:20px;flex:0 0 auto;min-width:22px}
+.ov-flag .t{font-size:12px;line-height:17px;color:var(--cc-fg-2)}
+.ov-flag .t b{color:var(--cc-fg);font-weight:500;display:block;font-size:13px}
+.ov-ok{padding:12px 13px;border:1px dashed var(--cc-line);border-radius:var(--cc-r-sm);
+  color:var(--cc-fg-3);font-size:12px;text-align:center}
+/* Below this the 8+4 and 7+5 pairs cannot both hold a table, so they stack — and the
+   narrow partner goes full width with them. Leaving it at span 6 put a half-empty row
+   next to nothing, which reads as a layout bug rather than a deliberate column. */
+@media (max-width:1200px){
+  .ov .sp3{grid-column:span 6}
+  .ov .sp4,.ov .sp5,.ov .sp7,.ov .sp8{grid-column:span 12}
+}
+@media (max-width:800px){.ov .sp3,.ov .sp4,.ov .sp5,.ov .sp7,.ov .sp8{grid-column:span 12}}
+
+/* ── clip workspace ──────────────────────────────────────────────────────────────
+   A clip is a place you work in, not a card in a grid. Sticky rail on the left holds
+   what the clip IS and what you can do to it; the right is the work itself. */
+.cw{display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;align-items:start}
+.cw-rail{position:sticky;top:calc(var(--cc-topbar) + 16px);display:flex;flex-direction:column;gap:12px}
+.cw-facts{display:flex;flex-direction:column;gap:0}
+.cw-facts div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;
+  border-bottom:1px solid var(--cc-line-subtle);font-size:13px}
+.cw-facts div:last-child{border-bottom:0}
+.cw-facts dt{color:var(--cc-fg-3)}
+.cw-facts dd{margin:0;font-weight:500;text-align:right;min-width:0;overflow-wrap:anywhere}
+.cw-step{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--cc-r-sm);
+  font-size:13px;border:1px solid transparent}
+.cw-step .tick{width:18px;height:18px;border-radius:var(--cc-r-full);flex:0 0 18px;
+  display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;
+  background:var(--cc-hover);color:var(--cc-fg-3)}
+.cw-step.done .tick{background:var(--cc-ok-bg);color:var(--cc-ok-fg)}
+.cw-step.now{border-color:var(--cc-accent);background:var(--cc-accent-subtle)}
+.cw-step.now .tick{background:var(--cc-accent);color:#fff}
+/* Answered vehicles, browsable and changeable — the view that did not exist. */
+.vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.vcard{border:1px solid var(--cc-line);border-radius:var(--cc-r-md);overflow:hidden;
+  background:var(--cc-card);display:flex;flex-direction:column}
+.vcard.changed{border-color:var(--cc-warn)}
+.vcard.editing{border-color:var(--cc-accent);box-shadow:var(--cc-shadow-2)}
+.vcard img{width:100%;height:110px;object-fit:cover;display:block;background:var(--cc-sunken)}
+.vcard .b{padding:9px 10px;font-size:12px;display:flex;flex-direction:column;gap:3px}
+.vcard .ans{font-weight:600;font-size:13px}
+.vcard .was{color:var(--cc-fg-3)}
+.vcard .edit{padding:0 10px 10px;display:flex;flex-wrap:wrap;gap:4px}
+@media (max-width:900px){.cw{grid-template-columns:minmax(0,1fr)}
+  .cw-rail{position:static}}
+
+/* A window that exists in the footage but has not been cut out yet. Same card, same
+   place in the grid — cutting fills it in rather than changing the page's shape. */
+.clipcard.planned{border-style:dashed;background:var(--cc-sunken);box-shadow:none}
+.clipcard.planned .cnum b{color:var(--cc-fg-off)}
+.clipcard.planned .ch b{color:var(--cc-fg-2)}
+
+/* The `hidden` attribute must actually hide. Every component class here sets `display`
+   (.btn is inline-flex, .tile is flex, and so on), and an author rule beats the user-
+   agent's `[hidden]{display:none}` — so `<button class="btn" hidden>` rendered normally.
+   That is why "Attach these files" showed on every station whose folder picker was open:
+   it is meant to appear only after Fetch finds files the station does not have yet, and
+   it was visible from the start. Declared last so it wins against any component rule. */
+[hidden]{display:none !important}
+
+/* ── clips tab: grid + a rail for whichever clip is selected ─────────────────────
+   Selecting a clip used to navigate to its own page, which threw away the list you
+   were working through. The detail, the actions and any running progress belong
+   beside the grid, not instead of it. */
+.cl-split{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}
+/* The rail scrolls ITSELF. Sticky alone only pins the top, so a rail taller than the
+   viewport forced you to scroll the whole page — past the clip grid — to read the clip's
+   own details. Now it stays put and takes its own scrollbar. */
+.cl-rail{position:sticky;top:calc(var(--cc-topbar) + 16px);display:flex;flex-direction:column;
+  gap:12px;max-height:calc(100vh - var(--cc-topbar) - 32px);overflow-y:auto;
+  overscroll-behavior:contain;padding-right:4px;scrollbar-width:thin}
+.cl-rail::-webkit-scrollbar{width:8px}
+.cl-rail::-webkit-scrollbar-thumb{background:var(--cc-line-strong);border-radius:4px}
+.cl-rail::-webkit-scrollbar-track{background:transparent}
+.clipcard{cursor:pointer;transition:border-color var(--cc-fast),box-shadow var(--cc-fast)}
+.clipcard.sel{border-color:var(--cc-accent);box-shadow:0 0 0 3px var(--cc-accent-subtle)}
+.cl-prog{height:6px;border-radius:3px;background:var(--cc-sunken);overflow:hidden;margin-top:6px}
+.cl-prog i{display:block;height:100%;background:var(--cc-accent);transition:width var(--cc-base)}
+@media (max-width:1100px){.cl-split{grid-template-columns:minmax(0,1fr)}
+  .cl-rail{position:static;max-height:none;overflow:visible}}
+
+/* Per-class performance: a percentage that has to be read at a glance across ten rows,
+   so it is a bar as well as a number. Colour is the alarm — a red 20% recall has to be
+   findable without reading the column. */
+.perfbar{display:flex;align-items:center;gap:8px;--pf:var(--cc-viz)}
+.perfbar .t{flex:1;min-width:44px;height:8px;background:var(--cc-hover);
+  border-radius:var(--cc-r-full);overflow:hidden}
+.perfbar .t i{display:block;height:100%;background:var(--pf);border-radius:var(--cc-r-full)}
+.perfbar b{flex:0 0 38px;text-align:right;font-size:12px;font-weight:600;
+  font-variant-numeric:tabular-nums;color:var(--cc-fg-2)}
+.perfbar.ok{--pf:var(--cc-ok)} .perfbar.warn{--pf:var(--cc-warn)}
+.perfbar.bad{--pf:var(--cc-bad)}
+.perfbar.bad b{color:var(--cc-bad-fg)}
+table.perf td{vertical-align:middle}
+table.perf td:nth-child(4),table.perf td:nth-child(5){min-width:130px}

@@ -1,0 +1,73 @@
+# Builds the surveyor's Windows executable.
+#
+# It runs here rather than on a developer machine because PyInstaller cannot
+# cross-compile: it freezes the interpreter and native libraries of the host, so a build
+# on macOS produces a macOS app whatever the spec says. A windows-latest runner is the
+# cheapest Windows machine available.
+#
+# torch is installed CPU-only on purpose. The CUDA wheel is ~2.5GB on its own and would
+# put the artifact past the 2GB upload limit, and it is useless on a laptop without an
+# NVIDIA card -- which is most of them. The app detects CUDA at runtime, so a machine
+# that has it can be served by a separate CUDA build when one is asked for.
+name: Build survey .exe
+
+on:
+  push:
+    branches: [main]
+    paths: ["survey/**", "app/**", "shared/**", ".github/workflows/build-survey-exe.yml"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install ultralytics opencv-python-headless fastapi uvicorn pydantic openpyxl
+          pip install pyinstaller
+
+      - name: Check the app imports before freezing it
+        # A missing import found here costs 30 seconds; found after a 20-minute freeze it
+        # costs the whole build.
+        run: |
+          python -c "import sys; sys.path[:0]=['survey','app']; sys.path.append('lab'); import api, work; print('imports OK')"
+
+      - name: Build
+        run: pyinstaller --noconfirm --clean survey/TrafficLens.spec
+
+      - name: Smoke-test the binary
+        # Start it, wait for the port, fetch /api/health. A build that produces an .exe
+        # which dies on launch is worse than a failed build, because it ships.
+        shell: pwsh
+        run: |
+          $p = Start-Process -PassThru dist/TrafficLens/TrafficLens.exe
+          $ok = $false
+          foreach ($i in 1..60) {
+            Start-Sleep -Seconds 2
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8801/api/health -TimeoutSec 3
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) { throw "the built app did not answer /api/health" }
+          Write-Host "binary answered /api/health"
+
+      - name: Zip
+        run: Compress-Archive -Path dist/TrafficLens/* -DestinationPath TrafficLens-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TrafficLens-windows
+          path: TrafficLens-windows.zip
+          retention-days: 30

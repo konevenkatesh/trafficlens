@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrafficLens — Attribute Pass</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#101216; color:#e8e8e8; font-family:-apple-system,system-ui,sans-serif; min-height:100vh; display:flex; flex-direction:column; }
+  #hdr { padding:10px 16px; background:#1c1f24; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  a { color:#6ab0f3; text-decoration:none; font-size:13px; }
+  #prog { font-size:13px; color:#9aa3ad; }
+  #views { flex:1; display:flex; gap:10px; align-items:center; justify-content:center; background:#000; padding:10px; min-height:0; }
+  #views img { max-width:46%; max-height:60vh; border-radius:10px; }
+  #tag { text-align:center; padding:8px; font-size:15px; }
+  #tag b { padding:3px 12px; border-radius:8px; background:#262a31; }
+  #btns { display:flex; gap:8px; padding:12px 16px 24px; background:#1c1f24; }
+  #btns button { flex:1; padding:16px 6px; font-size:15px; font-weight:700; border:none; border-radius:10px; cursor:pointer; color:#fff; }
+  #yes { background:#b07d0a; } #no { background:#0a5cd6; } #un { background:#3a3f47; flex:0.6; } #backb { background:#3a3f47; flex:0.5; }
+  #hint { font-size:12px; color:#77808a; padding:0 16px 14px; background:#1c1f24; }
+</style>
+</head>
+<body>
+<div id="hdr"><span><a href="/">← back</a> &nbsp; <b id="title">Attribute pass</b></span><span id="prog">loading…</span></div>
+<div id="views"><img id="v1"><img id="v2"></div>
+<div id="tag"><b id="already"></b></div>
+<div id="btns">
+  <button id="backb">‹ Back</button>
+  <button id="yes">🚕 YES (Y)</button>
+  <button id="no">🚗 NO — regular (N)</button>
+  <button id="un">Unclear (U)</button>
+</div>
+<div id="hint">Only vehicles that crossed your count line are shown (best two views each). Your answer outranks any AI judgment. Unjudged vehicles stay safely in the parent column of the report.</div>
+<script>
+const P = new URLSearchParams(location.search);
+const vidId = P.get("video"), attr = P.get("attr") || "taxi";
+const SITE = P.get("site") || "4";
+// Titles and button text come from the API's spec. They were a hardcoded map, so adding
+// an attribute meant editing this file — which is exactly why APSRTC never got one.
+const TITLES = {taxi: "Taxi (yellow board)?", maxi: "7-seater / Maxi cab?",
+                apsrtc: "APSRTC (state) bus?"};
+let VALS = ["yes", "no"];
+let items = [], idx = 0, done = 0;
+// A station is many clips. When one is finished, carry straight on to the next that has
+// work, so "done" means done for the survey rather than for one 15-minute file.
+async function nextClip() {
+  const el = document.getElementById("already");
+  el.textContent = "checking the rest of the station…";
+  try {
+    const r = await (await fetch(`/api/review-remaining?site_id=${SITE}&attr=${attr}`)).json();
+    const nxt = (r.videos || []).find(v => String(v.video_id) !== String(vidId));
+    if (nxt) {
+      location.href = `/attr.html?video=${nxt.video_id}&attr=${attr}&site=${SITE}`;
+      return;
+    }
+    el.textContent = `all ${attr} reviewed across the whole station ✅`;
+    document.getElementById("prog").textContent = "station complete";
+  } catch (e) { el.textContent = "all vehicles in this clip judged ✅"; }
+}
+
+async function load() {
+  try { await _load(); }
+  catch (e) {
+    // A page stuck on "loading…" gives no clue what broke; this one names it.
+    document.getElementById("prog").textContent = "failed: " + e.message;
+    document.getElementById("already").textContent = "could not load — " + e.message;
+  }
+}
+async function _load() {
+  const res = await fetch(`/api/attr-sample/${vidId}?attr=${attr}`);
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  const j = await res.json();
+  items = j.items;
+  const sp = j.spec || {};
+  VALS = (sp.values || []).filter(v => v !== "unclear");
+  const lab = sp.labels || {};
+  document.getElementById("title").textContent =
+    (TITLES[attr] || attr) + " — video " + vidId;
+  const pretty = v => lab[v] || v.charAt(0).toUpperCase() + v.slice(1);
+  document.getElementById("yes").textContent = pretty(VALS[0]) + " (Y)";
+  document.getElementById("no").textContent  = pretty(VALS[1]) + " (N)";
+  idx = items.findIndex(it => !it.judged); if (idx < 0) idx = items.length;
+  done = items.filter(it => it.judged).length;
+  show();
+}
+function show() {
+  document.getElementById("prog").textContent = `${done}/${items.length} judged (crossing vehicles only)`;
+  if (idx >= items.length) { nextClip(); return; }
+  const it = items[idx];
+  document.getElementById("v1").src = `/api/frame/${vidId}/${it.views[0].frame}`;
+  const v2 = document.getElementById("v2");
+  if (it.views[1]) { v2.style.display = ""; v2.src = `/api/frame/${vidId}/${it.views[1].frame}`; } else v2.style.display = "none";
+  document.getElementById("already").textContent = it.judged ? `current: ${it.judged} (${it.source})` : "unjudged";
+}
+async function send(value) {
+  if (idx >= items.length) return;
+  const it = items[idx];
+  await fetch(`/api/attr-verdict/${vidId}/${attr}`, {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({track_id: it.track_id, value})});
+  if (!it.judged) done++;
+  it.judged = value; it.source = "human";
+  idx++; show();
+}
+document.getElementById("yes").onclick = () => send(VALS[0]);
+document.getElementById("no").onclick = () => send(VALS[1]);
+document.getElementById("un").onclick = () => send("unclear");
+document.getElementById("backb").onclick = () => { if (idx > 0) { idx--; show(); } };
+document.addEventListener("keydown", e => {
+  const k = e.key.toLowerCase();
+  if (k === "y") send(VALS[0]);
+  else if (k === "n") send(VALS[1]);
+  else if (k === "u") send("unclear");
+});
+load();
+</script>
+</body>
+</html>

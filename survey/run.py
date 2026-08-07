@@ -1,0 +1,92 @@
+"""Entry point for the packaged app: start the server, open a browser, stay out of the way.
+
+A surveyor double-clicks TrafficLens.exe and expects a window. What actually happens is a
+local web server on 127.0.0.1 with the default browser pointed at it -- the same app that
+runs in development, so there is no second UI to keep in sync and no Electron to ship.
+
+Three things this has to get right, and each one is a support call if it does not:
+
+  * **Find a free port.** 8801 is often taken. Binding port 0 lets the OS pick and then
+    reports which, rather than failing with an error nobody can act on.
+  * **Keep the data next to the user, not inside the bundle.** A PyInstaller onefile
+    unpacks to a temp directory that is deleted on exit, so a database written there
+    vanishes with the app. It goes in the user's home instead.
+  * **Say something while it loads.** Importing torch takes several seconds; a console
+    that prints nothing looks hung, and the user closes it.
+"""
+import os
+import socket
+import sys
+import threading
+import time
+import webbrowser
+from pathlib import Path
+
+
+def _base():
+    """Where the code lives, bundled or not."""
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+
+
+def _data_dir():
+    """Where the user's work lives. Never inside the bundle -- that is temporary."""
+    if os.name == "nt":
+        root = Path(os.environ.get("LOCALAPPDATA", Path.home()))
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
+    else:
+        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    d = root / "TrafficLens"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _free_port(preferred=8801):
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", preferred))
+            return preferred
+        except OSError:
+            pass
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def main():
+    base = _base()
+    sys.path.insert(0, str(base / "survey"))
+    sys.path.insert(0, str(base / "app"))
+    sys.path.append(str(base / "lab"))
+
+    data = _data_dir()
+    print(f"TrafficLens Survey\n  data: {data}\n  loading (this takes a few seconds)…",
+          flush=True)
+
+    import db
+    db.DB_PATH = data / "trafficlens.db"     # before any connection is opened
+    db.conn()
+
+    import api
+    port = _free_port()
+    url = f"http://127.0.0.1:{port}"
+
+    def open_when_up():
+        for _ in range(120):
+            time.sleep(0.5)
+            try:
+                with socket.create_connection(("127.0.0.1", port), 0.4):
+                    break
+            except OSError:
+                continue
+        webbrowser.open(url)
+
+    threading.Thread(target=open_when_up, daemon=True).start()
+    print(f"  ready: {url}\n  keep this window open while you work.", flush=True)
+
+    import uvicorn
+    uvicorn.run(api.app, host="127.0.0.1", port=port, log_level="warning")
+
+
+if __name__ == "__main__":
+    main()

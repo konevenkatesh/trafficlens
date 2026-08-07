@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrafficLens — Counts</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#101216; color:#e8e8e8; font-family:-apple-system,system-ui,sans-serif; padding:20px; max-width:1000px; margin:0 auto; }
+  a { color:#6ab0f3; text-decoration:none; font-size:13px; }
+  h1 { font-size:19px; margin:8px 0 2px; } .sub { color:#8a94a0; font-size:13px; margin-bottom:16px; }
+  table { border-collapse:collapse; width:100%; margin-bottom:22px; font-size:13px; }
+  th, td { border:1px solid #2a2e35; padding:7px 10px; text-align:right; }
+  th:first-child, td:first-child { text-align:left; }
+  th { background:#1c1f24; }
+  .tot { font-weight:800; background:#171a1f; }
+  button { background:#2a2e35; color:#e8e8e8; border:1px solid #3a3f47; border-radius:8px; padding:8px 14px; cursor:pointer; font-size:13px; margin-right:6px; }
+  h2 { font-size:15px; margin:14px 0 8px; color:#8fc6ff; }
+</style>
+</head>
+<body>
+<a href="/">← back</a>
+<h1 id="title">Counts</h1>
+<div class="sub" id="sub"></div>
+<div style="margin-bottom:14px">
+  <button onclick="window.open('/api/report/'+vidId)">⬇ IRC workbook</button>
+  <button onclick="window.open('/api/report/'+vidId+'?taxonomy=aprdc_18.yaml')">⬇ APRDC workbook</button>
+  <button onclick="location='/scene.html?video='+vidId">✏️ Edit lines (counts update instantly)</button>
+  <button onclick="location='/attr.html?video='+vidId+'&attr=taxi'">🚕 Taxi pass</button>
+  <button onclick="location='/attr.html?video='+vidId+'&attr=maxi'">🛺 Maxi pass</button>
+  <button onclick="fetch('/api/attr-judge/'+vidId+'/taxi',{method:'POST'}).then(r=>r.ok?alert('AI taxi judge started'):r.json().then(j=>alert(j.detail)))">🤖 AI judge taxis</button>
+</div>
+<div id="out">loading…</div>
+<script>
+const vidId = new URLSearchParams(location.search).get("video");
+fetch("/api/videos").then(r=>r.json()).then(vs => { const v = vs.find(x=>x.id==vidId);
+  if (v) { document.getElementById("title").textContent = "Counts — " + v.name;
+    document.getElementById("sub").textContent = `starts ${v.start_clock} · ${v.tracks} tracks · condition: ${(v.quality||{}).condition||"?"} · grade ${(v.quality||{}).grade||"?"}`; } });
+async function load() {
+  try {
+    const st = await (await fetch("/api/review-stats/" + vidId)).json();
+    if (st.human_reviewed || st.judge_n) {
+      let msg = [];
+      if (st.human_reviewed) msg.push(`human sample: ${st.human_reviewed} checked, ${st.human_agree_pct}% agreed, ${st.reclassed} reclassed, ${st.not_vehicle} removed`);
+      if (st.judge_n) msg.push(`AI judge: ${st.judge_n} checked, ${st.judge_agree_pct}% agree`);
+      document.getElementById("sub").textContent += "  ·  " + msg.join("  ·  ");
+    }
+  } catch(e) {}
+  const r = await fetch("/api/counts/" + vidId);
+  if (!r.ok) { document.getElementById("out").textContent = (await r.json()).detail; return; }
+  const d = await r.json();
+  const classes = Object.keys(d.per_class);
+  const dirs = [...new Set(classes.flatMap(c => Object.keys(d.per_class[c]).filter(k=>k!=="total")))].sort();
+  let h = "<h2>Per class</h2><table><tr><th>Class</th>" + dirs.map(x=>`<th>${x}</th>`).join("") + "<th>Total</th></tr>";
+  let colTot = {};
+  for (const c of classes) {
+    h += `<tr><td>${c}</td>` + dirs.map(x=>{ const v=d.per_class[c][x]||0; colTot[x]=(colTot[x]||0)+v; return `<td>${v||""}</td>`; }).join("") + `<td><b>${d.per_class[c].total}</b></td></tr>`;
+  }
+  h += `<tr class="tot"><td>TOTAL</td>` + dirs.map(x=>`<td>${colTot[x]||0}</td>`).join("") + `<td>${d.total}</td></tr></table>`;
+  const bins = Object.keys(d.bins_15min);
+  if (bins.length) {
+    const bClasses = [...new Set(bins.flatMap(b=>Object.keys(d.bins_15min[b])))].sort();
+    h += "<h2>15-minute bins</h2><table><tr><th>Bin</th>" + bClasses.map(c=>`<th>${c}</th>`).join("") + "</tr>";
+    for (const b of bins) h += `<tr><td>${b}</td>` + bClasses.map(c=>`<td>${d.bins_15min[b][c]||""}</td>`).join("") + "</tr>";
+    h += "</table>";
+  }
+  h += `<h2>Last events</h2><table><tr><th>Clock</th><th>Track</th><th>Class</th><th>Line</th><th>Dir</th></tr>` +
+    d.events.slice(-30).reverse().map(e=>`<tr><td>${e.clock}</td><td>${e.track_id}</td><td>${e.class}</td><td>${e.line}</td><td>${e.direction}</td></tr>`).join("") + "</table>";
+  document.getElementById("out").innerHTML = h;
+}
+load();
+</script>
+</body>
+</html>

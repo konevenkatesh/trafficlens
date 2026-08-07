@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TrafficLens — Survey</title>
+<link rel="stylesheet" href="/shared/ui.css" />
+<style>
+  /* page-local only; anything reusable belongs in /shared/ui.css */
+  .vidrow{display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid var(--cc-line);
+    border-radius:var(--cc-r-md);background:var(--cc-card);transition:border-color var(--cc-fast);flex-wrap:wrap}
+  .vidrow:hover{border-color:var(--cc-line-strong)}
+  .vidrow .body{flex:1;min-width:200px}
+  .vidrow .name{display:flex;align-items:center;gap:8px;font-weight:500;color:var(--cc-fg)}
+  .vidrow .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .vidrow .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .addrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .addrow .field{flex:1;min-width:280px}
+  progress{width:120px;height:6px}
+  .sitecard{background:var(--cc-card);border:1px solid var(--cc-line);border-radius:var(--cc-r-lg);padding:24px}
+  .sitehead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px;flex-wrap:wrap}
+  .sitehead h3{margin:0;font-size:18px;line-height:28px;font-weight:600}
+  .sitemeta{font-size:12px;color:var(--cc-fg-3);margin-bottom:16px}
+  .sitestats{display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap}
+  .sitestats .lbl{font-size:12px;color:var(--cc-fg-3)}
+  .sitestats .val{font-size:20px;line-height:28px;font-weight:600;font-variant-numeric:tabular-nums}
+  .fixrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .fixrow select,.fixrow input{height:32px;padding:0 8px;border:1px solid var(--cc-line);
+    border-radius:var(--cc-r-md);background:var(--cc-card);color:var(--cc-fg);font-size:13px}
+  .mapbox{height:380px;border-radius:var(--cc-r-md);border:1px solid var(--cc-line);overflow:hidden}
+  .minimap{height:150px;width:220px;border-radius:var(--cc-r-md);border:1px solid var(--cc-line);
+    overflow:hidden;flex:0 0 220px}
+  /* Leaflet paints its own surfaces; keep them from glowing white in dark mode */
+  .leaflet-container{background:var(--cc-sunken)}
+  .leaflet-control-layers,.leaflet-bar a{background:var(--cc-card);color:var(--cc-fg)}
+  .leaflet-control-attribution{background:rgba(0,0,0,.55);color:#eee}
+  .leaflet-control-attribution a{color:#9fc7ff}
+</style>
+</head>
+<body>
+<script type="module">
+import { $, api, post, patch, esc, num, toast, mountShell, markNav, currentRoute,
+         makeRenderer, skeleton, empty, columnChart, rankedBars,
+         gradeStrip } from '/shared/shell.js';
+
+const ICON = {
+  dashboard:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>',
+  footage:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 12 6-3.5v11L16 16z"/></svg>',
+  verify:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="m9 12 2 2 4-4"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg>',
+  attrs:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 3v18M5 8l7-5 7 5"/><path d="M3 14h6l-3-6zM15 14h6l-3-6z"/></svg>',
+  reports:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M8 13h8M8 17h5"/></svg>',
+  lab:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 3v6l-5 9a2 2 0 0 0 1.7 3h12.6A2 2 0 0 0 20 18l-5-9V3M8 3h8"/></svg>',
+  locations:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg>',
+};
+
+mountShell({
+  wordmark: 'trafficlens',
+  groups: [
+    { label: 'Survey',  items: [ {id:'dashboard', label:'Dashboard', icon:ICON.dashboard},
+                                 {id:'stations', label:'Stations', icon:ICON.locations},
+                                 {id:'footage',   label:'Footage',   icon:ICON.footage} ] },
+    { label: 'Quality', items: [ {id:'verify',    label:'Verify',    icon:ICON.verify},
+                                 {id:'attrs',     label:'Attributes',icon:ICON.attrs} ] },
+    { label: 'Output',  items: [ {id:'reports',   label:'Reports',   icon:ICON.reports},
+                                 {id:'lab',       label:'Model Lab', icon:ICON.lab} ] },
+  ],
+  onRoute: route,
+});
+
+const render = makeRenderer('#main');
+let PICKER = null;        // live map picker, kept across form toggles
+let EDIT_STATION = null;  // station being edited, or null when creating
+const gradeTone = g => ({A:'ok',B:'ok',C:'warn',D:'bad'}[g] || 'idle');
+
+function videoRow(v, allSites = null) {
+  const busy = v.job && ['running','queued'].includes(v.job.status);
+  const chips = [
+    v.minutes ? `<span class="chip">${v.minutes} min</span>` : '',
+    v.clock_ok ? `<span class="chip">${esc(String(v.start_clock).slice(0, 16))}</span>`
+               : '<span class="status warn">no start time</span>',
+    v.grade ? `<span class="status ${gradeTone(v.grade)}">grade ${esc(v.grade)}</span>` : '',
+    v.condition ? `<span class="chip">${esc(v.condition)}</span>` : '',
+    v.tracks ? `<span class="chip">${num(v.tracks)} tracks</span>` : '',
+    v.model ? `<span class="chip mono">${esc(String(v.model).replace('yolo26s_morth15_',''))}</span>` : '',
+    (!v.has_line && v.tracks) ? '<span class="status warn">needs a count line</span>' : '',
+    v.excluded ? `<span class="status idle">excluded${v.excluded_reason ? ' — ' + esc(v.excluded_reason) : ''}</span>` : '',
+    v.error ? `<span class="status bad">${esc(v.error)}</span>` : '',
+  ].filter(Boolean).join('');
+  return `<div class="vidrow" style="${v.excluded ? 'opacity:.55' : ''}">
+    <div class="body">
+      <div class="name">${esc(v.name)}
+        ${v.counted != null ? `<span class="chip">${num(v.counted)} crossings</span>` : ''}</div>
+      <div class="chips">${chips}</div>
+      ${allSites ? `<div class="fixrow">
+        <select data-fix-site="${v.id}">
+          <option value="">— no station —</option>
+          ${allSites.map(s => `<option value="${s.id}"
+            ${(v.site_id === s.id || (!v.site_id && v.suggested_site === s.id)) ? 'selected' : ''}>${esc(s.name)}${
+              !v.site_id && v.suggested_site === s.id ? ' (matches camera)' : ''}</option>`).join('')}
+        </select>
+        <input type="datetime-local" data-fix-clock="${v.id}"
+          value="${v.clock_ok && v.start_clock ? esc(v.start_clock.replace(' ', 'T').slice(0, 16)) : ''}" />
+        <button class="btn sm secondary" data-fix-save="${v.id}">Save</button>
+        <button class="btn sm ghost" data-exclude="${v.id}" data-on="${v.excluded ? 1 : 0}"
+          title="Excluded footage stays on file but is left out of every total">
+          ${v.excluded ? 'Include in counts' : 'Exclude from counts'}</button>
+      </div>` : ''}
+      ${busy ? `<div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+        <progress value="${v.job.progress || 0}" max="100"></progress>
+        <span style="font-size:12px;color:var(--cc-fg-3)">${esc(v.job.message || v.job.status)}</span></div>` : ''}
+    </div>
+    <div class="acts">
+      <button class="btn sm secondary" data-route2="process/${v.id}">Pipeline</button>
+      <button class="btn sm secondary" data-go="/scene.html?video=${v.id}">Lines</button>
+      <button class="btn sm secondary" data-extract="${v.id}" ${busy?'disabled':''}>${v.tracks?'Re-extract':'Extract'}</button>
+      <button class="btn sm secondary" data-go="/counts.html?video=${v.id}" ${(v.has_line&&v.tracks)?'':'disabled'}>Counts</button>
+      <button class="btn sm secondary" data-go="/annotated.html?video=${v.id}" ${v.tracks?'':'disabled'}>Watch</button>
+    </div>
+  </div>`;
+}
+
+/** One card per location. Traffic profiles are never merged across sites — vehicles on
+    different roads are different streams, and a combined curve would mean nothing. */
+function siteCard(s) {
+  const peakIdx = s.hourly.findIndex(h => h.label === s.peak_hour);
+  const classes = Object.entries(s.classes).map(([k, v]) => ({ label: k, value: v }))
+    .filter(x => x.value > 0).slice(0, 6);
+  return `<div class="sitecard">
+    <div class="sitehead">
+      <div>
+        <h3>${esc(s.name)} <span class="chip mono">${esc(s.code)}</span></h3>
+        <div class="sitemeta">${[s.road_name, s.chainage].filter(Boolean).map(esc).join(' · ') || 'no road details yet'}</div>
+      </div>
+      <button class="btn sm secondary" data-site-edit="${s.id}">Edit station</button>
+    </div>
+    <div class="sitestats">
+      <div><div class="lbl">Vehicles</div><div class="val">${num(s.counted)}</div></div>
+      <div><div class="lbl">Videos</div><div class="val">${num(s.videos)}</div></div>
+      <div><div class="lbl">Busiest hour</div><div class="val">${s.peak_hour ? esc(s.peak_hour) : '—'}</div></div>
+    </div>
+    ${columnChart(s.hourly, { emphasis: peakIdx >= 0 ? peakIdx : null, height: 150 })}
+    ${classes.length ? `<div style="margin-top:16px">${rankedBars(classes)}</div>` : ''}
+  </div>`;
+}
+
+async function viewDashboard() {
+  const d = await api('/api/dashboard');
+  const t = d.totals;
+  const needFix = d.videos.filter(v => v.tracks && (!v.site_id || !v.clock_ok));
+  return `<div class="page">
+    <div class="page-head">
+      <div><h1>Survey</h1><p>Footage in, IRC and APRDC workbooks out. Counting is a query, so a line can be redrawn for free.</p></div>
+      <div class="head-actions">
+        <button class="btn secondary" data-route2="footage">Add footage</button>
+        <button class="btn primary" data-route2="reports">Reports</button>
+      </div>
+    </div>
+
+    <div class="grid g4">
+      <div class="tile"><div class="ico acc">${ICON.locations}</div><div>
+        <div class="lbl">Count stations</div><div class="val">${num(t.sites)}</div>
+        <div class="sub">${t.unassigned ? num(t.unassigned) + ' video(s) unassigned' : 'all footage assigned'}</div></div></div>
+      <div class="tile"><div class="ico ok">${ICON.footage}</div><div>
+        <div class="lbl">Videos</div><div class="val">${num(t.videos)}</div>
+        <div class="sub">${num(t.processed)} extracted${t.awaiting_line ? ` · ${t.awaiting_line} need a line` : ''}</div></div></div>
+      <div class="tile"><div class="ico info">${ICON.verify}</div><div>
+        <div class="lbl">Vehicles counted</div><div class="val">${num(t.vehicles)}</div>
+        <div class="sub">across every line drawn</div></div></div>
+      <div class="tile"><div class="ico warn">${ICON.attrs}</div><div>
+        <div class="lbl">Human-verified</div><div class="val">${num(t.reviewed)}</div>
+        <div class="sub">boxes checked by hand</div></div></div>
+    </div>
+
+    ${needFix.length ? `<div class="card" style="border-color:var(--cc-warn)">
+      <div class="card-head"><div><h2>Needs a station or a start time</h2>
+        <p>counts are held back from the charts until both are known — a count belongs to a station,
+           and every 15-minute bin comes from the clock</p></div></div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        ${needFix.map(v => fixRow(v, d.all_sites)).join('')}</div>
+    </div>` : ''}
+
+    ${d.sites.length ? `<div class="grid" style="gap:24px">
+        ${d.sites.map(siteCard).join('')}</div>`
+      : `<div class="card">${empty('No counted traffic yet',
+          t.sites ? 'Assign your footage to a station and give it a start time.'
+                  : 'Create a station first, then assign footage to it.',
+          `<button class="btn primary" data-route2="${t.sites ? 'footage' : 'stations'}">
+             ${t.sites ? 'Go to Footage' : 'Add a station'}</button>`)}</div>`}
+
+    <div class="card"><div class="card-head"><div><h2>Footage quality</h2>
+      <p>graded at ingest, before any GPU time is spent</p></div></div>
+      ${d.grades.length ? gradeStrip(d.grades)
+        : empty('Nothing graded yet', 'Add a video and it is graded automatically.')}
+    </div>
+  </div>`;
+}
+
+/** Inline repair for a video missing its location or clock — fixed where it is noticed. */
+function fixRow(v, allSites) {
+  return `<div class="vidrow"><div class="body">
+    <div class="name">${esc(v.name)}</div>
+    <div class="chips">
+      ${v.counted != null ? `<span class="chip">${num(v.counted)} crossings</span>` : ''}
+      ${!v.site_id ? '<span class="status warn">no station</span>' : ''}
+      ${!v.clock_ok ? '<span class="status warn">no start time</span>' : ''}
+    </div>
+    <div class="fixrow">
+      <select data-fix-site="${v.id}">
+        <option value="">— choose station —</option>
+        ${allSites.map(s => `<option value="${s.id}"
+          ${(v.site_id === s.id || v.suggested_site === s.id) ? 'selected' : ''}>${esc(s.name)}${
+            v.suggested_site === s.id && !v.site_id ? ' (matches camera)' : ''}</option>`).join('')}
+      </select>
+      <input type="datetime-local" data-fix-clock="${v.id}"
+        value="${v.clock_ok && v.start_clock ? esc(v.start_clock.replace(' ', 'T').slice(0, 16)) : ''}" />
+      <button class="btn sm primary" data-fix-save="${v.id}">Save</button>
+    </div>
+  </div></div>`;
+}
+
+/** A small compass rose showing which way the camera looks. Self-contained SVG — no
+    map tiles to fetch, works offline at the roadside. */
+function compassDial(bearing, label) {
+  if (bearing == null) return '';
+  const r = 26, cx = 32, cy = 32;
+  const a = (bearing - 90) * Math.PI / 180;
+  return `<svg width="64" height="64" viewBox="0 0 64 64" role="img"
+      aria-label="camera looks ${Math.round(bearing)} degrees, ${label || ''}">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--cc-line)" stroke-width="1.5"/>
+    <text x="${cx}" y="10" text-anchor="middle" font-size="9" fill="var(--cc-fg-3)">N</text>
+    <line x1="${cx}" y1="${cy}" x2="${cx + r * 0.8 * Math.cos(a)}" y2="${cy + r * 0.8 * Math.sin(a)}"
+      stroke="var(--cc-accent)" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy}" r="3" fill="var(--cc-accent)"/>
+  </svg>`;
+}
+
+function stationGeo(s) {
+  if (s.lat == null) return '<span class="chip">no coordinates yet</span>';
+  return `<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <div class="minimap" data-mini='${esc(JSON.stringify({lat:s.lat, lon:s.lon, bearing:s.bearing, nativeZoom:s.imagery_zoom}))}'></div>
+    ${compassDial(s.bearing, s.compass)}
+    <div style="font-size:12px;color:var(--cc-fg-3);line-height:1.6">
+      <div class="mono">${s.lat.toFixed(5)}, ${s.lon.toFixed(5)}</div>
+      ${s.bearing != null ? `<div>camera looks <b>${esc(s.compass || '')}</b> (${Math.round(s.bearing)}°)</div>` : ''}
+      ${s.daylight?.sunrise ? `<div>daylight ${esc(s.daylight.sunrise)} – ${esc(s.daylight.sunset)}</div>` : ''}
+      ${s.imagery_mpp ? `<div>imagery ${s.imagery_mpp} m/px (z${s.imagery_zoom})</div>` : ''}
+    </div></div>`;
+}
+
+/** Draw the pipeline graph if this page has one. Loaded on demand — most pages have none. */
+async function mountGraph() {
+  const el = document.querySelector('#graph');
+  if (!el) return;
+  const id = currentRoute().arg;
+  try {
+    const [{ renderGraph }, p] = await Promise.all([
+      import('/shared/nodegraph.js'),
+      api('/api/pipeline/' + id),
+    ]);
+    const g = renderGraph(el, p.graph, {
+      onNodeClick: node => {
+        const go = {
+          lines: `/scene.html?video=${id}`,
+          count: `/counts.html?video=${id}`,
+          verify: `/review.html?video=${id}`,
+          attr_taxi: `/attr.html?video=${id}&attr=taxi`,
+          attr_maxi: `/attr.html?video=${id}&attr=maxi`,
+          attr_apsrtc: `/attr.html?video=${id}&attr=apsrtc`,
+          axles: `/axles.html?video=${id}`,
+          source: `/annotated.html?video=${id}`,
+        }[node];
+        if (go) location.href = go;
+        else if (node === 'report') window.open(`/api/report/${id}?taxonomy=aprdc_18.yaml`);
+        else if (node === 'extract') document.querySelector('#runextract')?.focus();
+      },
+    });
+    // while extraction runs, keep the graph honest without repainting the page
+    if (p.graph.nodes.some(n => n.status === 'running')) {
+      const t = setInterval(async () => {
+        if (!document.body.contains(el)) return clearInterval(t);
+        try {
+          const fresh = await api('/api/pipeline/' + id);
+          g.update(fresh.graph);
+          if (!fresh.graph.nodes.some(n => n.status === 'running')) { clearInterval(t); route(); }
+        } catch { clearInterval(t); }
+      }, 3000);
+    }
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Could not draw the pipeline.<div class="mono"
+      style="margin-top:6px;font-size:12px">${esc(e.message)}</div></div>`;
+  }
+}
+
+/** Render the read-only station maps after the page paints — imagery is never on the
+    critical path, and a station without coordinates simply has no map. */
+async function mountMiniMaps() {
+  const els = document.querySelectorAll('[data-mini]');
+  if (!els.length) return;
+  try {
+    const { createMiniMap } = await import('/shared/mappicker.js');
+    els.forEach(el => {
+      try { createMiniMap(el, JSON.parse(el.dataset.mini)); } catch {}
+    });
+  } catch { /* offline: the coordinates and compass still tell the story */ }
+}
+
+/** The payoff of storing a bearing: the hours when the sun sits in the lens. */
+function glareNote(s) {
+  if (!s.glare || !s.glare.length) return '';
+  return `<div class="status warn" style="margin-top:12px;display:inline-flex">
+    sun in the lens ${s.glare.map(g => `${esc(g.start)}–${esc(g.end)}`).join(', ')} today —
+    expect glare, plan counts around it</div>`;
+}
+
+async function viewProcess(videoId) {
+  const [p, mods] = await Promise.all([
+    api('/api/pipeline/' + videoId),
+    api('/api/models'),
+  ]);
+  const v = p.video;
+  const cls = Object.entries(p.counts.per_class || {})
+    .map(([k, n]) => ({ label: k, value: n })).filter(x => x.value > 0);
+  return `<div class="page">
+    <div class="page-head">
+      <div><h1>${esc(v.name)}</h1>
+        <p>${esc(v.site || 'no station')}${v.model ? ' · counted with ' + esc(v.model.replace('yolo26s_morth15_','')) : ''}</p></div>
+      <div class="head-actions">
+        <button class="btn secondary" data-go="/scene.html?video=${videoId}">Count line</button>
+        <button class="btn secondary" data-go="/annotated.html?video=${videoId}">Watch</button>
+        <button class="btn secondary" data-open="/api/report/${videoId}?taxonomy=aprdc_18.yaml">APRDC</button>
+      </div>
+    </div>
+
+    <div class="card"><div class="card-head">
+      <div><h2>Pipeline</h2><p>click a step to open it · the three sub-splits run in parallel off counting</p></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select class="field" id="modelpick" style="height:32px;font-size:13px;width:auto">
+          ${mods.models.map(m => `<option value="${esc(m.id)}" ${m.id === mods.default ? 'selected' : ''}>
+             ${esc(m.label)} — mAP50 ${m.map50 ? m.map50.toFixed(3) : '—'}</option>`).join('')}
+        </select>
+        <button class="btn sm primary" id="runextract">Extract</button>
+      </div></div>
+      <div id="graph"></div>
+    </div>
+
+    <div class="grid g2">
+      <div class="card"><div class="card-head"><div><h2>Counted</h2>
+        <p>${p.counts.total != null ? num(p.counts.total) + ' crossings' : 'not counted yet'}</p></div></div>
+        ${cls.length ? rankedBars(cls) : empty('Nothing counted yet', 'Draw a count line, then extract.')}
+      </div>
+      <div class="card"><div class="card-head"><div><h2>Detector versions</h2>
+        <p>every count records the model that produced it</p></div></div>
+        <table><thead><tr><th>Model</th><th class="right">mAP50</th><th class="right">Recall</th>
+          <th class="right">Videos</th><th></th></tr></thead><tbody>
+          ${mods.models.map(m => `<tr>
+            <td class="id">${esc(m.label)}${m.is_default ? ' <span class="chip">default</span>' : ''}</td>
+            <td class="right num">${m.map50 ? m.map50.toFixed(3) : '—'}</td>
+            <td class="right num">${m.recall ? m.recall.toFixed(3) : '—'}</td>
+            <td class="right num">${m.in_use}</td>
+            <td class="right">${m.is_default ? '' :
+              `<button class="btn sm ghost" data-setdefault="${esc(m.id)}">Make default</button>`}</td>
+          </tr>`).join('')}</tbody></table>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function viewLocations() {
+  const list = await api('/api/sites');
+  return `<div class="page">
+    <div class="page-head">
+      <div><h1>Count stations</h1>
+        <p>IRC:9 counts belong to a station, not a folder. Footage is grouped by station and
+           totals are never summed across them.</p></div>
+      <div class="head-actions">
+        <button class="btn primary" id="s_toggle">Add station</button></div>
+    </div>
+
+    <div class="card" id="s_form" hidden><div class="card-head"><div><h2 id="s_formtitle">New station</h2>
+      <p>the camera id lets DVR footage assign itself; coordinates and bearing unlock glare prediction</p></div></div>
+      <div class="grid g3" style="gap:12px">
+        <div><label class="lbl">Name of station *</label><input class="field" id="s_name" placeholder="Bhalki Junction" /></div>
+        <div><label class="lbl">Name of road</label><input class="field" id="s_road" placeholder="SH-14 Bidar – Bhalki" /></div>
+        <div><label class="lbl">Chainage</label><input class="field" id="s_ch" placeholder="Km 12+400" /></div>
+        <div><label class="lbl">Camera id</label><input class="field" id="s_cam" placeholder="ch01" /></div>
+        <div><label class="lbl">District</label><input class="field" id="s_dist" placeholder="Bidar" /></div>
+        <div><label class="lbl">Station code</label><input class="field" id="s_code" placeholder="auto" /></div>
+      </div>
+
+      <div style="margin-top:20px;padding-top:20px;border-top:1px solid var(--cc-line-subtle)">
+        <div style="font-weight:500;margin-bottom:4px">Position and camera direction</div>
+        <p style="font-size:12px;color:var(--cc-fg-3);margin:0 0 12px">
+          Standing at the station? Capture both from this device. Otherwise type them in.</p>
+        <div class="grid g3" style="gap:12px">
+          <div><label class="lbl">Latitude</label><input class="field" id="s_lat" placeholder="18.04321" /></div>
+          <div><label class="lbl">Longitude</label><input class="field" id="s_lon" placeholder="77.21044" /></div>
+          <div><label class="lbl">Camera bearing (°)</label><input class="field" id="s_brg" placeholder="270 = looking west" /></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn secondary" id="s_gps">Use my position</button>
+          <button class="btn secondary" id="s_heading">Point phone the way the camera looks</button>
+          <button class="btn secondary" id="s_map">Pick on satellite map</button>
+          <span id="s_geostat" style="font-size:12px;color:var(--cc-fg-3);align-self:center"></span>
+        </div>
+        <div id="s_mapwrap" hidden style="margin-top:12px">
+          <div id="s_mapel" class="mapbox"></div>
+          <p style="font-size:12px;color:var(--cc-fg-3);margin:8px 0 0">
+            Click the junction to drop the camera pin, then drag the orange arrow to where the
+            camera looks. The shaded wedge is its field of view.</p>
+        </div>
+      </div>
+
+      <div style="margin-top:20px;display:flex;gap:8px">
+        <button class="btn primary" id="s_add">Save station</button>
+        <button class="btn secondary" id="s_cancel">Cancel</button>
+      </div>
+    </div>
+
+    ${list.length ? list.map(s => `<div class="sitecard">
+      <div class="sitehead">
+        <div><h3>${esc(s.name)} <span class="chip mono">${esc(s.code)}</span></h3>
+          <div class="sitemeta">${esc([s.road_name, s.chainage, s.district].filter(Boolean).join(' · ') || 'no road details yet')}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="chip">${num(s.videos)} video(s)</span>
+          ${s.camera_id ? `<span class="chip mono">${esc(s.camera_id)}</span>` : ''}
+          <button class="btn sm secondary" data-edit-station='${esc(JSON.stringify(s))}'>Edit</button>
+        </div>
+      </div>
+      ${stationGeo(s)}
+      ${glareNote(s)}
+    </div>`).join('')
+      : `<div class="card">${empty('No stations yet',
+          'Add the first road or junction you are surveying.',
+          '<button class="btn primary" data-open-form="1">Add station</button>')}</div>`}
+  </div>`;
+}
+
+async function viewFootage() {
+  const d = await api('/api/dashboard');
+  const groups = new Map();
+  for (const v of d.videos) {
+    const key = v.site_name || '— unassigned —';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(v);
+  }
+  return `<div class="page">
+    <div class="page-head">
+      <div><h1>Footage</h1>
+        <p>Grouped by station. Quality is graded at ingest, before any GPU time is spent.</p></div>
+      <div class="head-actions"><button class="btn primary" id="v_toggle">Add video</button></div>
+    </div>
+    <div class="card" id="v_form" hidden><div class="card-head"><div><h2>Add a video</h2>
+      <p>absolute path to an .mp4 on this machine or a mounted drive</p></div></div>
+      <div class="addrow">
+        <input class="field" id="vpath" placeholder="/Volumes/RK/Traffic/ch01_20260716160000.mp4" />
+        <select id="vsite" class="field" style="max-width:220px">
+          <option value="">station — set later</option>
+          ${d.all_sites.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+        </select>
+        <button class="btn primary" id="addbtn">Add video</button>
+      </div>
+      <p style="margin-top:10px;font-size:12px;color:var(--cc-fg-3)">
+        The start time is read from the filename when it is there; otherwise set it by hand on the row.
+        Bulk import of a whole day arrives with the next phase.</p>
+    </div>
+    ${[...groups.entries()].map(([site, vids]) => `
+      <div>
+        <div class="card-head" style="margin-bottom:12px">
+          <div><h2 style="font-size:18px">${esc(site)}</h2>
+            <p>${vids.length} video(s)</p></div></div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          ${vids.map(v => videoRow(v, d.all_sites)).join('')}</div>
+      </div>`).join('')
+      || `<div class="card">${empty('No footage yet', 'Add your first video above.')}</div>`}
+  </div>`;
+}
+
+const STUB = {
+  verify:  ['Verify', 'Randomly sampled boxes, checked by you. Your verdict outranks the model everywhere downstream.'],
+  attrs:   ['Attributes', 'Taxi, 7-seater and APSRTC splits — the columns the APRDC proforma needs that the detector cannot give.'],
+  reports: ['Reports', 'IRC and APRDC workbooks, generated from the stored trajectories.'],
+};
+
+async function viewStub(name) {
+  const [title, body] = STUB[name];
+  const d = await api('/api/dashboard');
+  const ready = d.videos.filter(v => v.tracks && v.has_line);
+  return `<div class="page">
+    <div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(body)}</p></div></div>
+    <div class="card">
+      ${ready.length ? `<div style="display:flex;flex-direction:column;gap:12px">
+        ${ready.map(v => `<div class="vidrow"><div class="body">
+          <div class="name">${esc(v.name)}</div>
+          <div class="chips"><span class="chip">${num(v.counted ?? 0)} crossings</span>
+            <span class="chip">${num(v.tracks)} tracks</span></div></div>
+          <div class="acts">
+            ${name === 'verify' ? `<button class="btn sm primary" data-go="/review.html?video=${v.id}">Verify boxes</button>` : ''}
+            ${name === 'attrs' ? `<button class="btn sm secondary" data-go="/attr.html?video=${v.id}&attr=taxi">Taxi</button>
+              <button class="btn sm secondary" data-go="/axles.html?video=${v.id}">Axles</button>` : ''}
+            ${name === 'reports' ? `<button class="btn sm secondary" data-open="/api/report/${v.id}">IRC</button>
+              <button class="btn sm primary" data-open="/api/report/${v.id}?taxonomy=aprdc_18.yaml">APRDC</button>` : ''}
+          </div></div>`).join('')}</div>`
+        : empty('Nothing ready yet',
+                'A video needs tracks and a count line before it can be ' +
+                (name === 'reports' ? 'reported.' : 'checked.'),
+                '<button class="btn primary" data-route2="footage">Go to Footage</button>')}
+    </div>
+  </div>`;
+}
+
+function wire() {
+  document.querySelectorAll('[data-route2]').forEach(b =>
+    b.onclick = () => location.hash = '#' + b.dataset.route2);
+  document.querySelectorAll('[data-go]').forEach(b =>
+    b.onclick = () => location.href = b.dataset.go);
+  document.querySelectorAll('[data-open]').forEach(b =>
+    b.onclick = () => window.open(b.dataset.open));
+  document.querySelectorAll('[data-extract]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await post(`/api/extract/${b.dataset.extract}`); toast('Extraction started'); route(); }
+    catch (e) { toast(e.message, true); b.disabled = false; }
+  });
+  const vform = document.querySelector('#v_form');
+  const vt = document.querySelector('#v_toggle');
+  if (vt) vt.onclick = () => {
+    vform.hidden = !vform.hidden;
+    if (!vform.hidden) document.querySelector('#vpath')?.focus();
+  };
+
+  const add = document.querySelector('#addbtn');
+  if (add) add.onclick = async () => {
+    const p = document.querySelector('#vpath').value.trim();
+    if (!p) return toast('Paste a video path first', true);
+    add.disabled = true;
+    try {
+      const r = await post('/api/videos', { path: p });
+      const site = document.querySelector('#vsite')?.value;
+      if (site && r.id) await patch(`/api/videos/${r.id}`, { site_id: +site });
+      toast(r.existing ? 'That video is already registered' : 'Video added and graded');
+      route();
+    } catch (e) { toast(e.message, true); add.disabled = false; }
+  };
+
+  // save location + start time together — they are the two things a count cannot do without
+  document.querySelectorAll('[data-fix-save]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.fixSave;
+    const site = document.querySelector(`[data-fix-site="${id}"]`)?.value;
+    const clock = document.querySelector(`[data-fix-clock="${id}"]`)?.value;
+    if (!site && !clock) return toast('Choose a station or set a start time first', true);
+    b.disabled = true;
+    try {
+      await patch(`/api/videos/${id}`, {
+        ...(site ? { site_id: +site } : {}),
+        ...(clock ? { start_clock: clock } : {}),
+      });
+      toast('Saved');
+      route();
+    } catch (e) { toast(e.message, true); b.disabled = false; }
+  });
+
+  // The add form stays closed until asked for — a page should open showing your data,
+  // not an empty form.
+  const form = document.querySelector('#s_form');
+  const openForm = () => { form.hidden = false; fillForm(null); document.querySelector('#s_name')?.focus(); };
+  const st = document.querySelector('#s_toggle');
+  if (st) st.onclick = () => { form.hidden ? openForm() : (form.hidden = true); };
+  document.querySelectorAll('[data-open-form]').forEach(b => b.onclick = openForm);
+  const scancel = document.querySelector('#s_cancel');
+  if (scancel) scancel.onclick = () => { form.hidden = true; fillForm(null); };
+
+  const geostat = msg => { const el = document.querySelector('#s_geostat'); if (el) el.textContent = msg; };
+  const setVal = (id, v) => { const el = document.querySelector('#' + id); if (el) el.value = v ?? ''; };
+
+  function fillForm(st) {
+    EDIT_STATION = st;
+    setVal('s_name', st?.name); setVal('s_road', st?.road_name); setVal('s_ch', st?.chainage);
+    setVal('s_cam', st?.camera_id); setVal('s_dist', st?.district); setVal('s_code', st?.code);
+    setVal('s_lat', st?.lat); setVal('s_lon', st?.lon); setVal('s_brg', st?.bearing);
+    const t = document.querySelector('#s_formtitle');
+    if (t) t.textContent = st ? `Edit ${st.name}` : 'New station';
+    const b = document.querySelector('#s_add');
+    if (b) b.textContent = st ? 'Save changes' : 'Save station';
+    // a station code is its identity in the report — changing it silently would orphan history
+    const code = document.querySelector('#s_code');
+    if (code) code.readOnly = !!st;
+    geostat('');
+  }
+
+  // Editing an existing station: same form, prefilled, and the map opens on its position.
+  document.querySelectorAll('[data-edit-station]').forEach(b => b.onclick = () => {
+    const st = JSON.parse(b.dataset.editStation);
+    PICKER = null;                                  // the old instance belongs to a stale DOM
+    const wrap = document.querySelector('#s_mapwrap');
+    if (wrap) wrap.hidden = true;
+    const mb = document.querySelector('#s_map');
+    if (mb) mb.textContent = 'Pick on satellite map';
+    document.querySelector('#s_form').hidden = false;
+    fillForm(st);
+    document.querySelector('#s_form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  const gps = document.querySelector('#s_gps');
+  if (gps) gps.onclick = () => {
+    if (!navigator.geolocation) return geostat('this browser has no location support');
+    geostat('locating…');
+    navigator.geolocation.getCurrentPosition(p => {
+      document.querySelector('#s_lat').value = p.coords.latitude.toFixed(6);
+      document.querySelector('#s_lon').value = p.coords.longitude.toFixed(6);
+      geostat(`captured to ±${Math.round(p.coords.accuracy)} m`);
+    }, err => geostat('could not get a fix: ' + err.message), { enableHighAccuracy: true, timeout: 15000 });
+  };
+
+  // Point the phone the way the camera looks and read the compass. Needs a real device;
+  // on a desktop it says so rather than failing silently.
+  // Office path: mark the station on satellite imagery and drag the arrow to set the
+  // direction. Same three numbers as the on-site capture, no site visit needed.
+  const mapBtn = document.querySelector('#s_map');
+  if (mapBtn) mapBtn.onclick = async () => {
+    const wrap = document.querySelector('#s_mapwrap');
+    if (!wrap.hidden) { wrap.hidden = true; mapBtn.textContent = 'Pick on satellite map'; return; }
+    wrap.hidden = false;
+    mapBtn.textContent = 'Hide map';
+    if (PICKER) { PICKER.invalidate(); return; }
+    geostat('loading imagery…');
+    try {
+      const { createMapPicker } = await import('/shared/mappicker.js');
+      const cur = {
+        lat: parseFloat(document.querySelector('#s_lat').value) || null,
+        lon: parseFloat(document.querySelector('#s_lon').value) || null,
+        bearing: parseFloat(document.querySelector('#s_brg').value) || null,
+      };
+      PICKER = await createMapPicker(document.querySelector('#s_mapel'), {
+        ...cur, nativeZoom: EDIT_STATION?.imagery_zoom,
+        onChange: v => {
+          document.querySelector('#s_lat').value = v.lat ?? '';
+          document.querySelector('#s_lon').value = v.lon ?? '';
+          document.querySelector('#s_brg').value = v.bearing ?? '';
+          geostat(v.bearing != null ? `picked — camera looks ${v.bearing}°` : '');
+        },
+      });
+      geostat('click the junction, then drag the arrow');
+    } catch (e) { geostat('map unavailable: ' + e.message); }
+  };
+
+  // The form has two ways to set a position — typing and the map. Keep them in step, so
+  // pasting coordinates from a report moves the pin instead of silently disagreeing with it.
+  ['#s_lat', '#s_lon', '#s_brg'].forEach(sel => {
+    const el = document.querySelector(sel);
+    if (el) el.onchange = () => {
+      if (!PICKER) return;
+      const lat = parseFloat(document.querySelector('#s_lat').value);
+      const lon = parseFloat(document.querySelector('#s_lon').value);
+      const brg = parseFloat(document.querySelector('#s_brg').value);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        PICKER.setValue({ lat, lon, bearing: Number.isFinite(brg) ? brg : null });
+      }
+    };
+  });
+
+  const head = document.querySelector('#s_heading');
+  if (head) head.onclick = async () => {
+    const start = () => {
+      geostat('hold steady, pointing where the camera looks…');
+      let best = null;
+      const on = e => {
+        const h = e.webkitCompassHeading ?? (e.alpha != null ? (360 - e.alpha) % 360 : null);
+        if (h != null) best = h;
+      };
+      window.addEventListener('deviceorientationabsolute', on, true);
+      window.addEventListener('deviceorientation', on, true);
+      setTimeout(() => {
+        window.removeEventListener('deviceorientationabsolute', on, true);
+        window.removeEventListener('deviceorientation', on, true);
+        if (best == null) return geostat('no compass on this device — type the bearing instead');
+        document.querySelector('#s_brg').value = Math.round(best);
+        geostat(`bearing captured: ${Math.round(best)}°`);
+      }, 2500);
+    };
+    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
+      try {
+        const r = await DeviceOrientationEvent.requestPermission();
+        if (r !== 'granted') return geostat('compass permission denied');
+      } catch { return geostat('compass unavailable here — type the bearing instead'); }
+    }
+    start();
+  };
+
+  const sadd = document.querySelector('#s_add');
+  if (sadd) sadd.onclick = async () => {
+    const val = id => document.querySelector('#' + id).value.trim() || null;
+    const numOrNull = id => { const v = val(id); return v == null ? null : Number(v); };
+    if (!val('s_name')) return toast('A station needs a name', true);
+    sadd.disabled = true;
+    const body = {
+      name: val('s_name'), road_name: val('s_road'), chainage: val('s_ch'),
+      camera_id: val('s_cam'), district: val('s_dist'),
+      lat: numOrNull('s_lat'), lon: numOrNull('s_lon'), bearing: numOrNull('s_brg'),
+      geo_source: val('s_lat') ? 'device' : null,
+    };
+    try {
+      if (EDIT_STATION) {
+        const moved = body.lat !== EDIT_STATION.lat || body.lon !== EDIT_STATION.lon;
+        const r = await patch(`/api/sites/${EDIT_STATION.id}`, body);
+        toast(moved && r.imagery_zoom
+          ? `Station updated — imagery here resolves to z${r.imagery_zoom}`
+          : 'Station updated');
+      } else {
+        await post('/api/sites', { ...body, code: val('s_code') });
+        toast('Station added');
+      }
+      EDIT_STATION = null;
+      route();
+    } catch (e) { toast(e.message, true); sadd.disabled = false; }
+  };
+
+  const runx = document.querySelector('#runextract');
+  if (runx) runx.onclick = async () => {
+    const model_id = document.querySelector('#modelpick')?.value;
+    runx.disabled = true;
+    try {
+      const r = await post('/api/extract/' + currentRoute().arg, { model_id });
+      toast('Extraction started on ' + String(r.model_id || '').replace('yolo26s_morth15_', ''));
+      route();
+    } catch (e) { toast(e.message, true); runx.disabled = false; }
+  };
+  document.querySelectorAll('[data-setdefault]').forEach(b => b.onclick = async () => {
+    try {
+      await post('/api/models/default', { model_id: b.dataset.setdefault });
+      toast('Default model changed — affects future extractions only');
+      route();
+    } catch (e) { toast(e.message, true); }
+  });
+
+  document.querySelectorAll('[data-site-edit]').forEach(b =>
+    b.onclick = () => location.hash = '#stations');
+
+  document.querySelectorAll('[data-exclude]').forEach(b => b.onclick = async () => {
+    const on = b.dataset.on === '1';
+    const reason = on ? null : (prompt('Why is this footage excluded from the counts?',
+                                       'duplicate of the same footage') || '').trim();
+    if (!on && reason === '') return;              // cancelled
+    try {
+      await patch(`/api/videos/${b.dataset.exclude}`,
+                  { excluded: !on, excluded_reason: on ? null : reason });
+      toast(on ? 'Back in the counts' : 'Excluded from every total');
+      route();
+    } catch (e) { toast(e.message, true); }
+  });
+}
+
+async function route() {
+  const { name, arg } = currentRoute();
+  const view = name || 'dashboard';
+  if (view === 'lab') { location.href = 'http://localhost:8800'; return; }
+  markNav(view);
+  $('#crumb').innerHTML = view === 'process'
+    ? 'Footage <em>›</em> pipeline'
+    : esc({ dashboard: 'Dashboard', stations: 'Count stations', footage: 'Footage',
+            verify: 'Verify', attrs: 'Attributes', reports: 'Reports' }[view] || 'Dashboard');
+  const build = view === 'footage' ? viewFootage
+    : view === 'process' ? () => viewProcess(arg)
+    : view === 'stations' ? viewLocations
+    : ['verify', 'attrs', 'reports'].includes(view) ? () => viewStub(view)
+    : viewDashboard;
+  PICKER = null;
+  const ok = await render(build, { skeletonHtml: `<div class="page">
+      <div class="card">${skeleton(2)}</div>
+      <div class="grid g4">${'<div class="tile"><div style="flex:1">' + skeleton(2) + '</div></div>'.repeat(4)}</div>
+      <div class="card">${skeleton(4)}</div></div>` });
+  if (ok) { wire(); mountMiniMaps(); mountGraph(); }
+}
+
+route();
+// Refresh only while a job is actually running, so a background poll never steals focus.
+setInterval(() => { if (document.querySelector('progress')) route(); }, 4000);
+</script>
+</body>
+</html>

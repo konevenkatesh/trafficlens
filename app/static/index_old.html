@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrafficLens</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#101216; color:#e8e8e8; font-family:-apple-system,system-ui,sans-serif; padding:20px; max-width:1080px; margin:0 auto; }
+  h1 { font-size:22px; margin-bottom:4px; } .sub { color:#8a94a0; font-size:13px; margin-bottom:18px; }
+  .addrow { display:flex; gap:8px; margin-bottom:20px; }
+  input[type=text] { flex:1; background:#1c1f24; border:1px solid #3a3f47; color:#e8e8e8; border-radius:8px; padding:10px 12px; font-size:13px; }
+  button { background:#0a5cd6; color:#fff; border:none; border-radius:8px; padding:10px 16px; font-size:13px; cursor:pointer; font-weight:600; }
+  button.sec { background:#2a2e35; } button:disabled { opacity:.45; cursor:default; }
+  .card { background:#1c1f24; border:1px solid #2a2e35; border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+  .vrow { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+  .vname { font-weight:700; font-size:15px; }
+  .meta { color:#8a94a0; font-size:12px; margin-top:2px; }
+  .grade { display:inline-block; padding:2px 9px; border-radius:6px; font-weight:800; font-size:12px; margin-left:8px; }
+  .gA { background:#0a7d33; } .gB { background:#b07d0a; } .gC { background:#c05b20; } .gD { background:#b03030; }
+  .warn { color:#ffca28; font-size:12px; margin-top:4px; }
+  .btns { display:flex; gap:6px; flex-wrap:wrap; }
+  progress { width:180px; height:10px; }
+  .status { font-size:12px; color:#7fd18c; }
+  a { color:#6ab0f3; }
+</style>
+</head>
+<body>
+<h1>🚦 TrafficLens <span style="font-size:12px;color:#8a94a0">personal edition</span></h1>
+<div class="sub">Complete workflow: add video → quality check → draw count lines → extract trajectories (once) → counts & reports (instant, re-drawable)</div>
+<div class="addrow">
+  <input id="vpath" type="text" placeholder="Absolute path to a video file, e.g. /Volumes/MySSD/Traffic_Count/benchmark/segments/srisailam_test.mp4">
+  <button onclick="addVideo()">+ Add video</button>
+</div>
+<div id="busybar" style="display:none;background:#26301c;border:1px solid #4a5d2a;border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:13px"></div>
+<div id="errbar" style="display:none;background:#3d1414;border:1px solid #7d2a2a;border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:13px"></div>
+<div id="list"></div>
+<script>
+function showErr(msg) {
+  const e = document.getElementById("errbar");
+  e.textContent = "✗ " + msg; e.style.display = "block";
+  setTimeout(() => e.style.display = "none", 6000);
+}
+async function addVideo() {
+  const path = document.getElementById("vpath").value.trim();
+  if (!path) return;
+  const r = await fetch("/api/videos", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({path})});
+  if (!r.ok) { showErr((await r.json()).detail || "failed"); return; }
+  document.getElementById("vpath").value = "";
+  load();
+}
+async function extract(id, btn) {
+  btn.disabled = true;
+  const r = await fetch("/api/extract/" + id, {method:"POST"});
+  if (!r.ok) { showErr((await r.json()).detail); btn.disabled = false; return; }
+  load();
+}
+function fmtJob(j) {
+  if (!j) return "";
+  if (j.status === "running" || j.status === "queued")
+    return `<progress value="${j.progress||0}" max="100"></progress> <span class="status">${(j.progress||0).toFixed(0)}% ${j.message||""}</span>`;
+  if (j.status === "done") return `<span class="status">✓ extracted (${j.message})</span>`;
+  if (j.status === "error") return `<span class="warn">✗ ${j.message}</span>`;
+  return "";
+}
+async function renderVid(id, btn) {
+  btn.disabled = true;
+  const r = await fetch("/api/render/" + id, {method:"POST"});
+  if (!r.ok) { showErr((await r.json()).detail); btn.disabled = false; return; }
+  load();
+}
+async function judgeVid(id, btn) {
+  btn.disabled = true;
+  const r = await fetch("/api/judge/" + id, {method:"POST"});
+  if (!r.ok) { showErr((await r.json()).detail); btn.disabled = false; return; }
+  load();
+}
+async function load() {
+  const vids = await (await fetch("/api/videos")).json();
+  const active = vids.map(v => v.job).filter(j => j && (j.status === "running" || j.status === "queued"));
+  const bb = document.getElementById("busybar");
+  if (active.length) {
+    const j = active[0];
+    const vn = (vids.find(v => v.id === j.video_id) || {}).name || ("video " + j.video_id);
+    bb.innerHTML = `⚙️ <b>${j.kind}</b> running on <b>${vn}</b> — ${(j.progress||0).toFixed(0)}% ${j.message||""} <span style="color:#8a94a0">(one job at a time; other buttons wait)</span>`;
+    bb.style.display = "block";
+  } else bb.style.display = "none";
+  document.getElementById("list").innerHTML = vids.map(v => {
+    const q = v.quality || {};
+    const busy = v.job && (v.job.status === "running" || v.job.status === "queued");
+    const hasTracks = v.tracks > 0;
+    const hasLines = (v.scene || []).length > 0;
+    return `<div class="card">
+      <div class="vrow">
+        <div>
+          <span class="vname">${v.name}</span>
+          <span class="grade g${q.grade||'B'}">${q.grade||'?'}</span>
+          <div class="meta">${(v.frames/ v.fps/60).toFixed(1)} min · ${v.width}×${v.height} · starts ${v.start_clock} · ${q.condition||''} · ${v.tracks} tracks stored ${hasLines ? "· "+v.scene.length+" line(s)" : ""}</div>
+          ${(q.warnings||[]).map(w=>`<div class="warn">⚠ ${w}</div>`).join("")}
+          <div style="margin-top:6px">${fmtJob(v.job)}</div>
+        </div>
+        <div class="btns">
+          <button class="sec" onclick="location='/scene.html?video=${v.id}'">✏️ Lines</button>
+          <button onclick="extract(${v.id}, this)" ${busy?"disabled":""}>${hasTracks?"↻ Re-extract":"▶ Extract"}</button>
+          <button class="sec" onclick="location='/counts.html?video=${v.id}'" ${hasTracks&&hasLines?"":"disabled"}>📊 Counts</button>
+          <button class="sec" onclick="window.open('/api/report/${v.id}')" ${hasTracks&&hasLines?"":"disabled"}>⬇ IRC</button>
+          <button class="sec" onclick="window.open('/api/report/${v.id}?taxonomy=aprdc_18.yaml')" ${hasTracks&&hasLines?"":"disabled"}>⬇ APRDC</button>
+          <button class="sec" onclick="renderVid(${v.id}, this)" ${hasTracks&&hasLines&&!busy?"":"disabled"}>🎬 Render</button>
+          <button class="sec" onclick="location='/annotated.html?video=${v.id}'" ${hasTracks?"":"disabled"}>▶ Watch</button>
+          <button class="sec" onclick="window.open('/api/annotated/${v.id}')" ${hasTracks?"":"disabled"}>⬇</button>
+          <button class="sec" onclick="location='/review.html?video=${v.id}'" ${hasTracks?"":"disabled"}>🔍 Verify</button>
+          <button class="sec" onclick="judgeVid(${v.id}, this)" ${hasTracks&&!busy?"":"disabled"}>🤖 Judge</button>
+        </div>
+      </div>
+    </div>`;
+  }).join("") || "<div class='meta'>No videos yet - add one above.</div>";
+}
+load();
+setInterval(load, 4000);
+</script>
+</body>
+</html>

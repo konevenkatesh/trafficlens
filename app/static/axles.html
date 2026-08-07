@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrafficLens — Axle Class</title>
+<style>
+  /* Sized for one decision at a time. The model already answered every truck it could
+     see clearly; what reaches this screen is only what it was unsure about, so the crop
+     gets the room and the answers sit under the thumb. */
+  :root { color-scheme: dark; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#101216; color:#e8e8e8; font-family:-apple-system,system-ui,sans-serif;
+         min-height:100vh; display:flex; flex-direction:column; }
+  #hdr { padding:10px 16px; background:#1c1f24; display:flex; justify-content:space-between;
+         align-items:center; flex-wrap:wrap; gap:8px; }
+  a { color:#6ab0f3; text-decoration:none; font-size:13px; }
+  #prog { font-size:13px; color:#9aa3ad; }
+  #summary { display:flex; gap:14px; flex-wrap:wrap; padding:10px 16px; background:#171a1f;
+             font-size:12px; color:#9aa3ad; }
+  #summary b { color:#e8e8e8; font-size:15px; display:block; }
+  #views { flex:1; display:flex; gap:10px; align-items:center; justify-content:center;
+           background:#000; padding:10px; min-height:0; }
+  #views img { max-width:62%; max-height:58vh; border-radius:10px; }
+  #views img#v2 { max-width:34%; opacity:.85; }
+  #tag { text-align:center; padding:8px; font-size:14px; color:#9aa3ad; }
+  #tag b { padding:3px 12px; border-radius:8px; background:#262a31; color:#e8e8e8; }
+  #btns { display:flex; gap:8px; padding:12px 16px 6px; background:#1c1f24; flex-wrap:wrap; }
+  #btns button { flex:1; min-width:90px; padding:16px 6px; font-size:15px; font-weight:700;
+                 border:none; border-radius:10px; cursor:pointer; color:#fff; }
+  .a2 { background:#0a5cd6; } .a3 { background:#1a7f4b; } .a4 { background:#b07d0a; }
+  .nt { background:#8a3030; } .un { background:#3a3f47; } .bk { background:#3a3f47; flex:.5; }
+  #hint { font-size:12px; color:#77808a; padding:8px 16px 20px; background:#1c1f24; }
+  #done { display:none; padding:40px 20px; text-align:center; color:#9aa3ad; }
+  #done h2 { color:#e8e8e8; margin-bottom:8px; }
+</style>
+</head>
+<body>
+<div id="hdr">
+  <span><a href="/">← back</a> &nbsp; <b>Axle class</b></span>
+  <span id="prog">loading…</span>
+</div>
+<div id="summary"></div>
+<div id="views"><img id="v1" alt="Truck to classify"><img id="v2" alt="Where it is in the frame"></div>
+<div id="tag"><b id="already"></b></div>
+<div id="btns">
+  <button class="bk" data-back>‹ Back</button>
+  <button class="a2" data-v="2_axle">2 axle <small>(1)</small></button>
+  <button class="a3" data-v="3_axle">3 axle <small>(2)</small></button>
+  <button class="a4" data-v="4_or_more_axle">4+ / artic <small>(3)</small></button>
+  <button class="nt" data-v="not_a_truck">Not a truck <small>(4)</small></button>
+  <button class="un" data-v="unclear">Can't tell <small>(5)</small></button>
+</div>
+<div id="hint">
+  Count wheel GROUPS along the side, not tyres — a rear pair of tyres at one point is one
+  axle. One group at the back = 2 axle; two close together = 3. Answer <b>Can't tell</b>
+  rather than guessing: it leaves the detector's class alone instead of inventing one.
+</div>
+<div id="done"><h2>Nothing left to review</h2>
+  <p>Every truck the model was unsure about has been settled.</p></div>
+
+<script>
+const P = new URLSearchParams(location.search);
+const VIDEO = P.get('video');
+const SITE = P.get('site') || '4';
+let Q = [], i = 0, answered = 0, state = {};
+
+const $ = s => document.querySelector(s);
+
+// Carry on to the next clip of the station that still has trucks waiting, so finishing
+// means finishing the survey rather than one 15-minute file.
+async function nextClip() {
+  $('#views').style.display = 'none'; $('#btns').style.display = 'none';
+  $('#tag').style.display = 'none'; $('#hint').style.display = 'none';
+  $('#done').style.display = 'block';
+  $('#prog').textContent = `${answered} answered`;
+  try {
+    const r = await fetch(`/api/review-remaining?site_id=${SITE}`).then(r => r.json());
+    const nxt = (r.videos || []).find(v => String(v.video_id) !== String(VIDEO));
+    if (nxt) { location.href = `/axles.html?video=${nxt.video_id}&site=${SITE}`; return; }
+    $('#done').innerHTML = '<h2>Station complete</h2><p>Every truck across all clips ' +
+      'has been classified or reviewed.</p>';
+  } catch (e) { /* leave the per-clip message */ }
+}
+
+async function load() {
+  const r = await fetch(`/api/axles/${VIDEO}`).then(r => r.json());
+  state = r; Q = r.queue || []; i = 0;
+  // The model's own numbers are shown so the reviewer knows what they are NOT being asked
+  // to check — this queue is the residue, not the whole job.
+  $('#summary').innerHTML = [
+    ['Classified by model', r.auto],
+    ['Answered by a person', r.human],
+    ['Waiting for you', r.pending],
+    ['Too far to judge', r.too_small],
+    ['Model', r.model ? `#${r.model.id} · ${Math.round(r.model.accuracy*100)}%` : 'none'],
+  ].map(([k, v]) => `<div>${k}<b>${v}</b></div>`).join('');
+  draw();
+}
+
+function draw() {
+  const it = Q[i];
+  if (!it) { nextClip(); return; }
+  $('#v1').src = `/api/axles/${VIDEO}/${it.track_id}/crop.jpg`;
+  $('#v2').src = `/api/axles/${VIDEO}/${it.track_id}/ctx.jpg`;
+  $('#prog').textContent = `${i + 1} of ${Q.length} · ${answered} answered`;
+  $('#already').textContent =
+    `${it.box_w}px wide · detector says ${it.det || '?'}` +
+    (it.pred ? ` · model guessed ${it.pred.replace(/_/g, ' ')} (${Math.round(it.confidence*100)}%, below the bar)` : '');
+  const n = Q[i + 1];
+  if (n) new Image().src = `/api/axles/${VIDEO}/${n.track_id}/crop.jpg`;
+}
+
+async function answer(v) {
+  const it = Q[i];
+  if (!it) return;
+  i++; draw();                       // move on immediately; reviewing has a rhythm
+  try {
+    const r = await fetch(`/api/axle-verdict/${VIDEO}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ track_id: it.track_id, value: v }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    answered++;
+  } catch (e) {
+    // A verdict changes a published number, so a failed write must not look answered.
+    i = Q.indexOf(it); draw();
+    alert(`Not saved: ${e.message}`);
+  }
+}
+
+document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => answer(b.dataset.v));
+document.querySelector('[data-back]').onclick = () => { i = Math.max(0, i - 1); draw(); };
+const KEYS = { '1': '2_axle', '2': '3_axle', '3': '4_or_more_axle',
+               '4': 'not_a_truck', '5': 'unclear' };
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft') { i = Math.max(0, i - 1); draw(); return; }
+  if (KEYS[e.key]) { e.preventDefault(); answer(KEYS[e.key]); }
+});
+load();
+</script>
+</body>
+</html>

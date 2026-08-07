@@ -1,0 +1,62 @@
+# The datastore holds the surveys AND the OpenRouter/RunPod keys (lab_settings). It must
+# never leave this machine. Backups included -- a .bak is the same secrets, older.
+app/*.db
+app/*.db-wal
+app/*.db-shm
+app/*.db.bak-*
+data/*.db*
+
+# Footage, and everything derived from it. Hundreds of gigabytes, regenerable, and the
+# recordings themselves are client material.
+lab_work/
+lab_gold/
+survey_out/
+app/axle_crops/
+app/renders/
+*.mp4
+*.avi
+*.mkv
+*.dav
+
+# Benchmark scratch: 3GB of segments and results. The tracker config is the one thing in
+# here the engine actually needs at runtime, so it is kept.
+benchmark/*
+!benchmark/bytetrack_low.yaml
+
+# Model weights: only what the app ships. The other 613MB are superseded axle checkpoints
+# the promotion gate rejected and an experimental detector -- keeping rejected weights in
+# the repo makes them one careless path away from production.
+models/*
+!models/yolo26s_morth15_v1.pt
+!models/yolo26s_morth15_v2.pt
+!models/yolo26s_morth15_v3.pt
+!models/yolo26s_morth15_v4.pt
+!models/yolo26s_morth15_v5.pt
+!models/attrs/
+models/attrs/*
+!models/attrs/axles_resnet18_4d598166.pt
+
+# Environment and noise
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+build/
+dist/
+*.spec.bak
+node_modules/
+
+# Training data and per-station working output. 5.8GB and 1.6GB respectively, tens of
+# thousands of frames and label files. This is the Lab's raw material, versioned by the
+# runs that produced it, not source — and none of it is needed to build the survey app.
+dataset/
+stations/
+runs/
+app/reports_out/
+
+# A 2.1GB dataset tarball, an empty stray database, and a downloaded RunPod binary.
+# GitHub rejects any file over 100MB, so the tarball would fail the push outright.
+*.tgz
+*.tar.gz
+/trafficlens.db
+bin/

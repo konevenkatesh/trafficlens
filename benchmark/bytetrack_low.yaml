@@ -1,0 +1,8 @@
+# ByteTrack tuned for small/low-confidence detections in dense heterogeneous traffic
+tracker_type: bytetrack
+track_high_thresh: 0.35   # default 0.5 - first-stage association
+track_low_thresh: 0.05    # default 0.1 - second-stage recovery
+new_track_thresh: 0.35    # default 0.6 - THE big one: allow tracks to start from weaker detections
+track_buffer: 60          # default 30 - survive ~2.4s occlusions at stride 2
+match_thresh: 0.85        # default 0.8 - slightly looser IoU matching
+fuse_score: True

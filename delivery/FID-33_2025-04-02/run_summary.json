@@ -1,0 +1,139 @@
+{
+ "station": {
+  "road": "FID33 PK5 (rural)",
+  "location_id": "FID-33",
+  "direction_from": "",
+  "direction_to": "",
+  "weather": "",
+  "enumerator": "",
+  "supervisor": ""
+ },
+ "produced": "2026-08-06 02:43:07",
+ "clips": 8,
+ "workbook": "/Volumes/MySSD/Traffic_Count/delivery/FID-33_2025-04-02/APRDC_FID-33_2025-04-02.xlsx",
+ "annotated": [
+  "/Volumes/MySSD/Traffic_Count/delivery/FID-33_2025-04-02/annotated/20250402_095711_video4_annotated.mp4",
+  "/Volumes/MySSD/Traffic_Count/delivery/FID-33_2025-04-02/annotated/20250402_101211_video6_annotated.mp4",
+  "/Volumes/MySSD/Traffic_Count/delivery/FID-33_2025-04-02/annotated/20250402_102711_video9_annotated.mp4",
+  "/Volumes/MySSD/Traffic_Count/delivery/FID-33_2025-04-02/annotated/20250402_104212_video10_annotated.mp4",
+  "/Volumes/MySSD/Traffic_Count/delivery/FID-33_2025-04-02/annotated/20250402_104808_video5_annotated.mp4",
+  "/Volumes/MySSD/Traffic_Count/delivery/FID-33_2025-04-02/annotated/20250402_110308_video8_annotated.mp4",
+  "/Volumes/MySSD/Traffic_Count/delivery/FID-33_2025-04-02/annotated/20250402_111808_video11_annotated.mp4",
+  "/Volumes/MySSD/Traffic_Count/delivery/FID-33_2025-04-02/annotated/20250402_113309_video12_annotated.mp4"
+ ],
+ "window": {
+  "from": "2025-04-02 09:57:11",
+  "to": "2025-04-02 11:38:39",
+  "minutes": 101.5
+ },
+ "total": 1793,
+ "pcu": 1777.0,
+ "per_class": {
+  "Two Wheelers": 759,
+  "Autorickshaw (3W)": 249,
+  "7 seater (3W)/Maxi Cabs": 0,
+  "Taxi": 0,
+  "Car/Jeep/Van (non-taxi)": 568,
+  "Mini Bus": 0,
+  "APSRTC Bus": 40,
+  "Other Bus": 4,
+  "LCV": 65,
+  "2-Axle Truck": 23,
+  "3-Axle Truck": 67,
+  "MAV (Truck Trolly)": 14,
+  "Tractor-Trolly": 4,
+  "Tractor": 0,
+  "Cycle": 0,
+  "Cycle Rickshaw": 0,
+  "Animal Drawn": 0,
+  "Others (pl. specify)": 0
+ },
+ "classify": {
+  "model_id": 8,
+  "per_video": [
+   {
+    "video_id": 4,
+    "checked": 4,
+    "applied": 0,
+    "needs_review": 0,
+    "too_small": 0,
+    "already_answered_by_human": 4,
+    "queue": 0
+   },
+   {
+    "video_id": 6,
+    "checked": 15,
+    "applied": 0,
+    "needs_review": 0,
+    "too_small": 0,
+    "already_answered_by_human": 15,
+    "queue": 0
+   },
+   {
+    "video_id": 9,
+    "checked": 24,
+    "applied": 0,
+    "needs_review": 1,
+    "too_small": 1,
+    "already_answered_by_human": 7,
+    "queue": 0
+   },
+   {
+    "video_id": 10,
+    "checked": 4,
+    "applied": 0,
+    "needs_review": 0,
+    "too_small": 0,
+    "already_answered_by_human": 1,
+    "queue": 0
+   },
+   {
+    "video_id": 5,
+    "checked": 8,
+    "applied": 0,
+    "needs_review": 0,
+    "too_small": 0,
+    "already_answered_by_human": 8,
+    "queue": 0
+   },
+   {
+    "video_id": 8,
+    "checked": 16,
+    "applied": 0,
+    "needs_review": 0,
+    "too_small": 0,
+    "already_answered_by_human": 16,
+    "queue": 0
+   },
+   {
+    "video_id": 11,
+    "checked": 17,
+    "applied": 0,
+    "needs_review": 1,
+    "too_small": 1,
+    "already_answered_by_human": 4,
+    "queue": 0
+   },
+   {
+    "video_id": 12,
+    "checked": 12,
+    "applied": 0,
+    "needs_review": 0,
+    "too_small": 0,
+    "already_answered_by_human": 3,
+    "queue": 0
+   }
+  ],
+  "pending_review": 0
+ },
+ "unreviewed_columns": [
+  {
+   "column": "7 seater (3W)/Maxi Cabs",
+   "needs": "auto_seats"
+  },
+  {
+   "column": "Taxi",
+   "needs": "car_use"
+  }
+ ]
+}

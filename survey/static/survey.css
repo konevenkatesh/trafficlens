@@ -1,0 +1,113 @@
+/* Survey app skin.
+
+   Deliberately bigger and plainer than the Lab. This runs on a site office laptop, often
+   on a small screen, used by somebody doing a repetitive job for hours -- so targets are
+   large, the current step is obvious without reading, and nothing that is not the next
+   action competes for attention. */
+
+.wrap { max-width: 1040px; margin: 0 auto; padding: 28px 24px 80px; }
+.boot { padding: 80px; text-align: center; color: var(--cc-fg-3); }
+
+/* ── the seven steps, always visible ── */
+.steps { display: flex; gap: 8px; margin: 0 0 24px; flex-wrap: wrap; }
+.steps .s {
+  flex: 1 1 150px; padding: 12px 14px; border-radius: var(--cc-r-md);
+  border: 1px solid var(--cc-line); background: var(--cc-surface);
+  display: flex; align-items: center; gap: 10px; font-size: 13px;
+}
+.steps .s .n {
+  width: 22px; height: 22px; flex: 0 0 22px; border-radius: var(--cc-r-full);
+  display: grid; place-items: center; font-size: 12px; font-weight: 600;
+  background: var(--cc-hover); color: var(--cc-fg-3);
+}
+.steps .s.done { border-color: var(--cc-ok); }
+.steps .s.done .n { background: var(--cc-ok); color: #fff; }
+.steps .s.now { border-color: var(--cc-acc); box-shadow: 0 0 0 3px var(--cc-acc-bg); }
+.steps .s.now .n { background: var(--cc-acc); color: #fff; }
+
+/* ── the hour grid: the main working surface ── */
+.hours { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; }
+.hr {
+  border: 1px solid var(--cc-line); border-radius: var(--cc-r-md); padding: 12px;
+  background: var(--cc-surface); text-align: left; cursor: pointer; font: inherit;
+  transition: border-color .12s, box-shadow .12s;
+}
+.hr:hover:not(:disabled) { border-color: var(--cc-acc); }
+.hr:disabled { cursor: default; opacity: .95; }
+.hr .t { font-size: 19px; font-weight: 650; letter-spacing: -.02em; }
+.hr .d { font-size: 11px; color: var(--cc-fg-3); margin-top: 2px; }
+.hr .bar { height: 5px; border-radius: 3px; background: var(--cc-hover); margin: 10px 0 8px; overflow: hidden; }
+.hr .bar i { display: block; height: 100%; background: var(--cc-ok); }
+.hr .cta { font-size: 12px; font-weight: 600; color: var(--cc-acc); }
+.hr.done { background: var(--cc-ok-bg); border-color: transparent; }
+.hr.done .cta { color: var(--cc-ok-fg); }
+.hr.busy { border-color: var(--cc-acc); box-shadow: 0 0 0 3px var(--cc-acc-bg); }
+.hr .night { font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+             color: var(--cc-warn-fg); background: var(--cc-warn-bg);
+             padding: 1px 6px; border-radius: 4px; margin-left: 6px; }
+
+/* ── folder picker ── */
+.picker { max-height: 260px; overflow: auto; border: 1px solid var(--cc-line);
+          border-radius: var(--cc-r-md); }
+.picker button { display: flex; width: 100%; text-align: left; gap: 10px; padding: 9px 12px;
+                 border: 0; border-bottom: 1px solid var(--cc-line); background: none;
+                 font: inherit; cursor: pointer; align-items: center; }
+.picker button:hover { background: var(--cc-hover); }
+.picker .here { font-family: ui-monospace, monospace; font-size: 12px;
+                padding: 9px 12px; background: var(--cc-hover); color: var(--cc-fg-2);
+                position: sticky; top: 0; }
+
+/* ── review ──
+   Every control sits in the same place on every vehicle. This is the whole ergonomic
+   point of the screen: a surveyor answers hundreds in a sitting, and if "Not a vehicle"
+   slides left when the class name is short, or the row jumps up when a crop is less
+   tall, the mouse has to re-aim every single time. So the stage is a fixed height, the
+   answer row is a fixed four-column grid, and the class grid is a fixed five columns.
+   Nothing reflows between vehicles. */
+.rv { text-align: center; }
+
+.rv .stage { height: 356px; display: flex; gap: 14px; align-items: center;
+             justify-content: center; }
+.rv .imgs { display: contents; }
+.rv .imgs img { border-radius: var(--cc-r-md); background: var(--cc-hover);
+                object-fit: contain; }
+.rv .imgs img.main { height: 340px; width: auto; max-width: 62%; }
+.rv .imgs img.ctx { height: 210px; width: auto; max-width: 34%; opacity: .9; }
+
+/* Reserved whether or not this vehicle was flagged, so the buttons never shift up. */
+.rv .why { min-height: 20px; margin: 8px 0 0; }
+
+.rv .ans { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
+           max-width: 760px; margin: 14px auto 0; }
+.rv .ans .btn { min-height: 46px; font-size: 14px; width: 100%;
+                justify-content: center; white-space: nowrap; overflow: hidden;
+                text-overflow: ellipsis; }
+.rv .ans .slot-empty { visibility: hidden; }   /* holds the column, shows nothing */
+
+.rv .more { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px;
+            max-width: 760px; margin: 12px auto 0; }
+.rv .more .btn { width: 100%; justify-content: center; font-size: 12px;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv .more .lead { grid-column: 1 / -1; text-align: center; }
+.rv .nav { max-width: 760px; margin: 14px auto 0; }
+
+@media (max-width: 720px) {
+  .rv .stage { height: auto; flex-wrap: wrap; }
+  .rv .imgs img.main, .rv .imgs img.ctx { max-width: 100%; height: auto; }
+  .rv .ans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rv .more { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.big { font-size: 30px; font-weight: 680; letter-spacing: -.02em; line-height: 1.1; }
+.muted-sm { font-size: 12px; color: var(--cc-fg-3); }
+.toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+         background: var(--cc-fg-1); color: var(--cc-bg); padding: 11px 18px;
+         border-radius: var(--cc-r-md); font-size: 13px; z-index: 90; max-width: 80vw; }
+.toast.bad { background: var(--cc-bad); color: #fff; }
+
+/* Voice: the mic state has to be readable at a glance from across a desk — a reviewer
+   who thinks it is listening and is not will talk through ten vehicles. */
+#vBtn.on { background: var(--cc-bad); color: #fff; border-color: transparent; }
+.vheard { min-height: 18px; margin: 10px 0 0; font-style: italic; }
+.vheard.ok { color: var(--cc-ok-fg); }
+.vheard.warn { color: var(--cc-warn-fg); }

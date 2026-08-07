@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrafficLens — Count Lines</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#101216; color:#e8e8e8; font-family:-apple-system,system-ui,sans-serif; height:100vh; display:flex; flex-direction:column; }
+  #top { padding:10px 16px; background:#1c1f24; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  a { color:#6ab0f3; text-decoration:none; font-size:13px; }
+  #wrap { position:relative; flex:1; background:#000; display:flex; align-items:center; justify-content:center; min-height:0; }
+  video { max-width:100%; max-height:100%; }
+  canvas { position:absolute; cursor:crosshair; }
+  #bar { padding:10px 16px; background:#1c1f24; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button { background:#2a2e35; color:#e8e8e8; border:1px solid #3a3f47; border-radius:8px; padding:8px 14px; cursor:pointer; font-size:13px; }
+  #save { background:#0a7d33; border-color:#0a7d33; font-weight:700; }
+  .chip { background:#262a31; border:1px solid #3a3f47; border-radius:6px; padding:4px 8px; font-size:12px; display:flex; gap:6px; align-items:center; }
+  .chip input { background:#1a1d22; color:#e8e8e8; border:1px solid #3a3f47; border-radius:4px; width:110px; padding:2px 6px; font-size:12px; }
+  .chip span { cursor:pointer; color:#d16a6a; }
+  #hint { font-size:12px; color:#8a94a0; }
+  #status { font-size:13px; color:#7fd18c; }
+</style>
+</head>
+<body>
+<div id="top"><a href="/">← back</a><b id="title">Count lines</b>
+  <span id="hint">Click = line start, click again = line end. Green arrow marks the <b>IN</b> side. Multiple lines OK. Counts recompute instantly after save — no re-extraction needed.</span></div>
+<div id="wrap"><video id="vid" loop muted playsinline></video><canvas id="cv"></canvas></div>
+<div id="bar">
+  <button id="pp">⏯</button>
+  <div id="chips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+  <button id="undo">↩ Undo</button><button id="clear">🗑 Clear</button>
+  <button id="save">💾 Save lines</button><span id="status"></span>
+</div>
+<script>
+const vidId = new URLSearchParams(location.search).get("video");
+const vid = document.getElementById("vid"), cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let lines = [], pending = null, srcW = 1920, srcH = 1080;
+vid.src = "/api/video-file/" + vidId;
+vid.addEventListener("loadedmetadata", () => { srcW = vid.videoWidth; srcH = vid.videoHeight; vid.play().catch(()=>{}); fit(); });
+new ResizeObserver(fit).observe(document.getElementById("wrap"));
+fetch("/api/scenes/" + vidId).then(r=>r.json()).then(j => { lines = j.lines || []; redraw(); });
+fetch("/api/videos").then(r=>r.json()).then(vs => { const v = vs.find(x=>x.id==vidId); if (v) document.getElementById("title").textContent = "Count lines — " + v.name; });
+
+const sx = () => cv.width / srcW, sy = () => cv.height / srcH;
+function fit() { const r = vid.getBoundingClientRect(); cv.width = r.width; cv.height = r.height; cv.style.left = vid.offsetLeft+"px"; cv.style.top = vid.offsetTop+"px"; redraw(); }
+function redraw() {
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const colors = ["#00e676","#29b6f6","#ffca28","#ef5350","#ab47bc"];
+  lines.forEach((l,i) => {
+    const c = colors[i%5], x1=l.start[0]*sx(), y1=l.start[1]*sy(), x2=l.end[0]*sx(), y2=l.end[1]*sy();
+    ctx.strokeStyle=c; ctx.fillStyle=c; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    [[x1,y1],[x2,y2]].forEach(p=>{ctx.beginPath();ctx.arc(p[0],p[1],5,0,7);ctx.fill();});
+    const dx=x2-x1, dy=y2-y1, len=Math.hypot(dx,dy)||1, nx=dy/len, ny=-dx/len, mx=(x1+x2)/2, my=(y1+y2)/2, L=34;
+    ctx.beginPath(); ctx.moveTo(mx,my); ctx.lineTo(mx+nx*L,my+ny*L); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(mx+nx*L,my+ny*L);
+    ctx.lineTo(mx+nx*(L-10)-ny*6,my+ny*(L-10)+nx*6); ctx.lineTo(mx+nx*(L-10)+ny*6,my+ny*(L-10)-nx*6);
+    ctx.closePath(); ctx.fill();
+    ctx.font="bold 12px system-ui"; ctx.fillText("IN", mx+nx*(L+12)-6, my+ny*(L+12)+4);
+    ctx.fillText(l.name, x1+6, y1-8);
+  });
+  if (pending) { ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(pending[0]*sx(),pending[1]*sy(),5,0,7); ctx.fill(); }
+  document.getElementById("chips").innerHTML = lines.map((l,i) =>
+    `<span class="chip"><input value="${l.name}" data-i="${i}"><span data-del="${i}">✕</span></span>`).join("");
+  document.querySelectorAll(".chip input").forEach(inp => inp.onchange = () => { lines[+inp.dataset.i].name = inp.value; });
+  document.querySelectorAll(".chip [data-del]").forEach(d => d.onclick = () => { lines.splice(+d.dataset.del,1); redraw(); });
+}
+cv.addEventListener("click", ev => {
+  const r = cv.getBoundingClientRect();
+  const p = [Math.round((ev.clientX-r.left)/sx()), Math.round((ev.clientY-r.top)/sy())];
+  if (!pending) pending = p;
+  else { lines.push({name:"line"+(lines.length+1), start:pending, end:p}); pending = null; }
+  redraw();
+});
+document.getElementById("pp").onclick = () => vid.paused ? vid.play() : vid.pause();
+document.getElementById("undo").onclick = () => { if (pending) pending = null; else lines.pop(); redraw(); };
+document.getElementById("clear").onclick = () => { lines = []; pending = null; redraw(); };
+document.getElementById("save").onclick = async () => {
+  const r = await fetch("/api/scenes/" + vidId, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({lines})});
+  document.getElementById("status").textContent = r.ok ? "✓ saved " + lines.length + " line(s)" : "save failed";
+};
+</script>
+</body>
+</html>
