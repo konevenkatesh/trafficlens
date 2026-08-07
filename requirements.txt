@@ -1,0 +1,25 @@
+# Runtime dependencies for the survey app and the Windows build.
+#
+# Pinned to the versions this project is actually verified against. An unpinned build
+# picks up whatever ultralytics or torch released this morning, and the first anyone
+# hears of an incompatibility is a surveyor whose extraction crashes on site.
+#
+# torch is deliberately NOT pinned to a CUDA build here: the workflow installs the CPU
+# wheel from PyTorch's own index, because the CUDA one is ~2.5GB on its own and useless
+# on a laptop without an NVIDIA card. The app detects CUDA at run time either way.
+
+torch==2.13.0
+torchvision==0.28.0
+ultralytics==8.4.114
+
+# headless: the packaged app never opens an OpenCV window, and the GUI build drags in
+# Qt, which roughly doubles the bundle for nothing.
+opencv-python-headless==5.0.0.93
+
+fastapi==0.141.1
+uvicorn==0.52.1
+pydantic==2.13.4
+openpyxl==3.1.5
+numpy==2.4.6
+pillow==12.3.0
+PyYAML==6.0.3

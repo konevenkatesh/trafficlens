@@ -14,7 +14,8 @@ name: Build survey .exe
 on:
   push:
     branches: [main]
-    paths: ["survey/**", "app/**", "shared/**", ".github/workflows/build-survey-exe.yml"]
+    paths: ["survey/**", "app/**", "lab/**", "shared/**", "requirements.txt",
+            ".github/workflows/build-survey-exe.yml"]
   workflow_dispatch:
 
 jobs:
@@ -32,8 +33,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install ultralytics opencv-python-headless fastapi uvicorn pydantic openpyxl
+          # CPU torch first, from PyTorch's own index. Installing requirements.txt alone
+          # would pull the default wheel, which on Windows means a ~2.5GB CUDA build that
+          # pushes the artifact past the upload limit and is useless without an NVIDIA
+          # card. Same pinned version either way, so the later install is satisfied.
+          pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
           pip install pyinstaller
 
       - name: Fetch model weights
