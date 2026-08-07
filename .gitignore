@@ -23,18 +23,13 @@ app/renders/
 benchmark/*
 !benchmark/bytetrack_low.yaml
 
-# Model weights: only what the app ships. The other 613MB are superseded axle checkpoints
-# the promotion gate rejected and an experimental detector -- keeping rejected weights in
-# the repo makes them one careless path away from production.
-models/*
-!models/yolo26s_morth15_v1.pt
-!models/yolo26s_morth15_v2.pt
-!models/yolo26s_morth15_v3.pt
-!models/yolo26s_morth15_v4.pt
-!models/yolo26s_morth15_v5.pt
-!models/attrs/
-models/attrs/*
-!models/attrs/axles_resnet18_4d598166.pt
+# No weights in the repo. This is source only: 147MB of .pt files would dominate every
+# clone, and git stores binaries badly -- each retrain adds the whole file again.
+#
+# The weights live as assets on a GitHub Release instead, and the Windows build downloads
+# them before freezing, so the .exe a surveyor gets still has everything inside it and
+# never phones home. See .github/workflows/build-survey-exe.yml.
+models/
 
 # Environment and noise
 .venv/

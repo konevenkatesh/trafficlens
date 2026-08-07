@@ -36,6 +36,27 @@ jobs:
           pip install ultralytics opencv-python-headless fastapi uvicorn pydantic openpyxl
           pip install pyinstaller
 
+      - name: Fetch model weights
+        # The repo is source only. Weights live as assets on the `weights` release, so a
+        # clone stays 1.4MB and a retrain does not add another 20MB to history forever.
+        # They are pulled in HERE, before freezing, so the .exe the surveyor receives
+        # still carries everything inside it and never downloads anything at run time.
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force models/attrs | Out-Null
+          gh release download weights --dir models --pattern "*.pt" --clobber
+          # The axle head belongs in models/attrs, not models/ — seed.py and the spec
+          # both look for it there.
+          Get-ChildItem models -Filter "axles_*.pt" | ForEach-Object {
+            Move-Item $_.FullName models/attrs/ -Force
+          }
+          $n = (Get-ChildItem models -Recurse -Filter *.pt).Count
+          if ($n -lt 2) { throw "expected detector + axle head, found $n weight files" }
+          Get-ChildItem models -Recurse -Filter *.pt |
+            ForEach-Object { Write-Host ("  {0}  {1:N1} MB" -f $_.Name, ($_.Length/1MB)) }
+
       - name: Fetch ffprobe
         # Windows ships no ffprobe, and the app cannot read a recording's duration or
         # frame rate without one — every file would look unreadable. A static build is
