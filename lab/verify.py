@@ -105,10 +105,13 @@ def _reasons(video_id):
             if r["box_w"] >= axle_pass.MIN_BOX_W and (
                     r["pred"] is None or (r["confidence"] or 0) < axle_pass.CONF_FLOOR):
                 out.setdefault(r["track_id"], []).append("axle model unsure")
-    # the judge ensemble could not agree
-    for r in db.rows("""SELECT track_id FROM lab_crops
-                        WHERE video_id=? AND state='contested'""", video_id):
-        out.setdefault(r["track_id"], []).append("judges disagreed")
+    # The judge ensemble could not agree. Guarded, because lab_crops belongs to the Lab
+    # and does not exist at all in a survey-only install -- where this module is still
+    # very much in use.
+    if db.one("SELECT name FROM sqlite_master WHERE type='table' AND name='lab_crops'"):
+        for r in db.rows("""SELECT track_id FROM lab_crops
+                            WHERE video_id=? AND state='contested'""", video_id):
+            out.setdefault(r["track_id"], []).append("judges disagreed")
     return out
 
 

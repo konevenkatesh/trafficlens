@@ -116,6 +116,17 @@ def axle_head():
     return {"model_id": mid, "path": path}
 
 
+def tables():
+    """Create the tables the app reads but never explicitly creates.
+
+    `clip_verdicts` is made by verify.init(), which only ran when somebody opened the
+    review screen -- but the station page counts verdicts on every load, so a fresh
+    install failed before a surveyor could reach the screen that would have fixed it.
+    """
+    import verify
+    verify.init()
+    return {"verdicts": "ready"}
+
+
 def run():
-    out = {"detectors": detectors(), "axles": axle_head()}
-    return out
+    return {"tables": tables(), "detectors": detectors(), "axles": axle_head()}

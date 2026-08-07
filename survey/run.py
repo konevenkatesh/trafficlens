@@ -29,7 +29,16 @@ def _base():
 
 
 def _data_dir():
-    """Where the user's work lives. Never inside the bundle -- that is temporary."""
+    """Where the user's work lives. Never inside the bundle -- that is temporary.
+
+    An explicit TRAFFICLENS_DATA wins, so the app can be pointed at a clean directory --
+    which is the only way to test what a first-ever run actually does.
+    """
+    forced = os.environ.get("TRAFFICLENS_DATA")
+    if forced:
+        d = Path(forced)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
     if os.name == "nt":
         root = Path(os.environ.get("LOCALAPPDATA", Path.home()))
     elif sys.platform == "darwin":

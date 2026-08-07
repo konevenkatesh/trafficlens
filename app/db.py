@@ -75,6 +75,14 @@ MIGRATIONS = [
     ("videos", "excluded_reason", "TEXT"),
     ("tracks", "dup_of", "INTEGER"),         # were previously ALTERed in by dedup.py
     ("tracks", "join_to", "INTEGER"),
+    # The Lab added these to `sites` with a bare ALTER at runtime, so they exist on any
+    # database the Lab has ever opened -- and on none that it has not. The survey app
+    # needs all three (the footage folder, and the station's one count line), so on a
+    # fresh install every attach and every line save failed with "no such column".
+    # Declared here instead, where any app that opens the datastore gets them.
+    ("sites", "footage_dir", "TEXT"),
+    ("sites", "default_line", "TEXT"),
+    ("sites", "line_set", "REAL"),
     # ── station-scoped attribute heads ──
     # A head is calibrated to one camera. "760px is too small to read axles" is true of
     # KDP-01's mounting height and lens, not of a station set further back where the same
