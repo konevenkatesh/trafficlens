@@ -412,6 +412,27 @@ async function tick(id) {
 /* ── steps 4 & 5: review and report ── */
 function paintAfter(id, d) {
   const p = d.progress;
+
+  /* Detection and counting are different things, and the gap between them is the line.
+     The detector has found every vehicle in the footage; none of them has "crossed"
+     anything until there is a line to cross. Showing Review and Report before that
+     would offer two buttons that come back empty and explain nothing. */
+  if (!p.line) {
+    $('#stepAfter').innerHTML = `<div class="card" style="border-color:var(--cc-acc)">
+      <div class="card-body" style="text-align:center;padding:28px">
+        <div class="big">${num(p.tracks)}</div>
+        <p class="muted-sm" style="margin:4px 0 0">vehicles found in the footage</p>
+        <p style="margin:14px 0 0;max-width:520px;margin-inline:auto">
+          None of them is <b>counted</b> yet. A vehicle counts when it crosses the line,
+          so nothing can be reviewed or reported until you draw one.</p>
+        <button class="btn primary" id="afterLine" style="margin-top:14px">
+          Draw the count line</button>
+      </div></div>`;
+    const b = $('#afterLine');
+    if (b) b.onclick = () => openLine(id, d.line || []);
+    return;
+  }
+
   $('#stepAfter').innerHTML = `<div class="grid g2">
     <div class="card"><div class="card-body">
       <h2 style="margin:0 0 4px;font-size:17px">Check the model's work</h2>
