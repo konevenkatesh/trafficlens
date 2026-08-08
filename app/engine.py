@@ -10,7 +10,11 @@ from pathlib import Path
 
 import db
 
-ROOT = Path(__file__).parent.parent
+# Bundled read-only files live under sys._MEIPASS in a frozen build, and `__file__` for
+# a frozen module points inside it -- so `__file__.parent.parent` lands ABOVE the bundle
+# and every packaged path silently misses. Writable paths must NOT use this: they follow
+# TRAFFICLENS_DATA instead, because the bundle is a temp directory deleted on exit.
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 # TRAFFICLENS_MODEL lets a candidate model be extracted into its own video row and
 # compared against the live one, without disturbing the trajectories already reviewed.
 MODEL_ID = os.environ.get("TRAFFICLENS_MODEL", "yolo26s_morth15_v4")
