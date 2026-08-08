@@ -561,7 +561,7 @@ function openVoiceTraining() {
 let RQ = null, RI = 0, RID = null, RMODE = 'critical', RCLS = '';
 
 async function viewReview(id, mode) {
-  RID = id; RMODE = mode === 'all' ? 'all' : 'critical';
+  RID = id; RMODE = ['all', 'done'].includes(mode) ? mode : 'critical';
   await reloadReview();
 }
 
@@ -585,10 +585,16 @@ function drawReview() {
   function filterBar() {
     const total = (RQ.classes || []).reduce((a, [, n]) => a + n, 0);
     return `<div class="card rvfilter"><div class="card-body">
+      ${/* Three views, not two. Without the third, an answer went in and became
+            unreachable — a surveyor who miscalled a lorry had no way back to it, and
+            "0 to go" was simply the end of the screen. Answering again overwrites the
+            same row, so nothing is ever listed or counted twice. */''}
       <div class="seg" role="group">
         <button data-mode="critical" class="${RMODE === 'critical' ? 'on' : ''}">
           Needs a check</button>
         <button data-mode="all" class="${RMODE === 'all' ? 'on' : ''}">Everything</button>
+        <button data-mode="done" class="${RMODE === 'done' ? 'on' : ''}">
+          Already checked</button>
       </div>
       <label class="lbl" for="rvCls">Vehicle type</label>
       <select class="field sm" id="rvCls">
@@ -615,7 +621,9 @@ function drawReview() {
       <div class="page-head"><div><h1>All done</h1>
         <p>${RMODE === 'critical'
           ? 'Every vehicle that needed a second opinion has been checked.'
-          : 'Every detected vehicle has been checked.'}</p></div>
+          : RMODE === 'done'
+            ? 'You have not answered any vehicles yet — nothing to look back at.'
+            : 'Every detected vehicle has been checked.'}</p></div>
         <a class="btn ghost" href="#station/${RID}">Back to station</a></div>
       ${filterBar()}
       <div class="card"><div class="card-body" style="text-align:center;padding:36px">
@@ -660,8 +668,10 @@ function drawReview() {
       </div></div>
       ${/* Always rendered, empty when there is nothing to say — an appearing line would
             push every button down by its own height on flagged vehicles only. */''}
-      <p class="muted-sm why">${it.mandatory
-        ? esc((it.reasons || []).join(' · ')) : ''}</p>
+      <p class="muted-sm why">${it.verdict
+        ? `You answered <b>${esc(it.verdict)}</b>${
+            it.revisions ? ` · changed ${it.revisions} time(s)` : ''} — answering again replaces it`
+        : it.mandatory ? esc((it.reasons || []).join(' · ')) : ''}</p>
       ${/* Every answer has a key, and the key is printed on the button. A surveyor does
             a few hundred of these in a sitting; the difference between reaching for the
             mouse each time and pressing Enter is the difference between an afternoon and
@@ -787,6 +797,15 @@ document.addEventListener('keydown', e => {
 /* ─────────────────────────── report ─────────────────────────── */
 async function viewReport(id) {
   const d = await api(`/api/stations/${id}/report`, undefined, 'GET');
+  const wireAnnotate = () => app.querySelectorAll('[data-annot]').forEach(b => {
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = 'Queued…';
+      try {
+        await api(`/api/clips/${b.dataset.annot}/annotate`, {});
+        toast('Making the video — it queues behind any detection still running');
+      } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = 'Make video'; }
+    };
+  });
   if (d.empty) {
     app.innerHTML = `<div class="wrap"><div class="page-head"><div><h1>Report</h1></div>
       <a class="btn ghost" href="#station/${id}">Back</a></div>
@@ -847,8 +866,12 @@ async function viewReport(id) {
 
     <div class="card" style="margin-top:14px"><div class="card-head"><div>
       <h2>Recordings</h2><p>every file that went into this total</p></div></div>
+      ${/* An annotated video is how somebody believes the number. Watching a lorry
+            cross the line and the count tick is worth more than any accuracy figure, and
+            it is what gets sent to a client who disputes a total. Per recording, because
+            rendering re-encodes every frame and nobody wants all of them. */''}
       <table><thead><tr><th>File</th><th>Starts</th><th class="right">Vehicles</th>
-        <th class="right">PCU</th><th>Notes</th></tr></thead><tbody>
+        <th class="right">PCU</th><th>Notes</th><th>Video</th></tr></thead><tbody>
       ${d.clips.map(c => `<tr>
         <td>${esc(c.name || `clip ${c.video_id}`)}</td>
         <td class="mono">${esc((c.start || '').slice(0, 16))}</td>
@@ -857,9 +880,15 @@ async function viewReport(id) {
         <td>${c.error ? `<span class="status warn">${esc(c.error)}</span>`
           : (c.checks || []).length
             ? `<span class="status warn">${c.checks.length} to look at</span>`
-            : '<span class="status ok">fine</span>'}</td></tr>`).join('')}
+            : '<span class="status ok">fine</span>'}</td>
+        <td>${c.annotated
+          ? `<a class="btn sm ghost" href="/api/clips/${c.video_id}/annotated.mp4"
+               target="_blank">▶ Watch</a>`
+          : `<button class="btn sm ghost" data-annot="${c.video_id}">Make video</button>`}
+        </td></tr>`).join('')}
       </tbody></table></div>
   </div>`;
+  wireAnnotate();
 }
 
 /* ─────────────────────────── modal + router ─────────────────────────── */

@@ -1,6 +1,7 @@
 """Annotated video renderer: draws boxes/IDs/classes/lines/running counts from the
 trajectory store onto the source video. No model inference - pure playback of the DB.
 Output downscaled to 1280w for size; ~2-4x realtime on CPU."""
+import os
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -11,7 +12,10 @@ import db
 from counting import count_video
 from engine import CLASSES
 
-OUT_DIR = Path(__file__).parent / "annotated"
+# Written at run time, so it follows the data directory. Inside a frozen bundle this is
+# a temp folder deleted on exit -- the render would finish and then disappear.
+OUT_DIR = Path(os.environ.get("TRAFFICLENS_DATA")
+               or Path(__file__).resolve().parent) / "annotated"
 COLORS = [(118, 230, 0), (40, 202, 255), (246, 182, 41), (80, 83, 239), (188, 71, 171),
           (218, 198, 38), (99, 110, 141), (67, 112, 255), (192, 107, 92), (122, 64, 236),
           (136, 150, 0), (38, 166, 255), (51, 202, 192), (127, 133, 161), (174, 164, 144)]

@@ -315,8 +315,12 @@ def queue():
     q = work.queue_state()
     cur = q.get("running")
     if cur:
-        j = db.one("""SELECT progress,message,started FROM jobs WHERE video_id=?
-                      AND kind='extract' ORDER BY id DESC LIMIT 1""", cur["video_id"])
+        # Match the job KIND that is actually running. Hardcoding 'extract' meant a
+        # render read the progress of some earlier extraction — reporting 100% from the
+        # first second, so the bar was a lie and nothing could be waited on.
+        j = db.one("""SELECT progress,message,started FROM jobs WHERE video_id=? AND kind=?
+                      ORDER BY id DESC LIMIT 1""",
+                   cur["video_id"], cur.get("kind") or "extract")
         if j:
             cur.update({"progress": j["progress"] or 0, "message": j["message"]})
             pct = (j["progress"] or 0) / 100.0
@@ -412,6 +416,58 @@ def review_image(video_id: int, track_id: int, kind: str):
     return FileResponse(p, media_type="image/jpeg")
 
 
+# ───────────────────────────── annotated video ─────────────────────────────
+def _render_path(video_id):
+    """Where this recording's annotated video actually is.
+
+    Two places, because render.py writes to whichever it can: if the Lab's `organise`
+    module is importable it files the render inside the station's own folder, otherwise
+    it falls back to a flat directory. Checking only the flat one reported "not made yet"
+    for a video sitting finished on disk -- which is exactly what happened the first time
+    this was tested.
+    """
+    import render
+    v = db.one("SELECT name FROM videos WHERE id=?", video_id)
+    if not v:
+        return None
+    try:
+        import organise
+        q = organise.render_path(video_id)
+        if q and Path(q).is_file():
+            return Path(q)
+    except Exception:
+        pass
+    p = render.OUT_DIR / f"annotated_{v['name']}.mp4"
+    return p if p.is_file() else None
+
+
+@app.post("/api/clips/{video_id}/annotate")
+def annotate(video_id: int):
+    """Draw the boxes, tracks and the count line onto the footage.
+
+    This is how a surveyor checks the count is real rather than plausible: watching a
+    lorry cross the line and the number tick is worth more than any accuracy figure. It
+    is also what gets sent to a client who does not believe the total.
+    """
+    import sites
+    if not db.one("SELECT COUNT(*) n FROM tracks WHERE video_id=?", video_id)["n"]:
+        raise HTTPException(400, "detect this recording first — there is nothing to draw")
+    if not sites.lines_for(video_id)[0]:
+        raise HTTPException(400, "draw the count line first — the video shows crossings")
+    r = work.enqueue_render(video_id)
+    if r.get("error"):
+        raise HTTPException(400, r["error"])
+    return {**r, "queue": work.queue_state()}
+
+
+@app.get("/api/clips/{video_id}/annotated.mp4")
+def annotated(video_id: int):
+    p = _render_path(video_id)
+    if not p:
+        raise HTTPException(404, "not made yet")
+    return FileResponse(str(p), media_type="video/mp4", filename=p.name)
+
+
 # ───────────────────────────── the report ─────────────────────────────
 def _overlaps(video_ids):
     """Recordings whose clock times cover each other — i.e. traffic counted twice.
@@ -492,6 +548,7 @@ def report(site_id: int):
         clips.append({"video_id": vid, "name": c["video"]["name"],
                       "start": c["video"]["start_clock"], "total": c["total"],
                       "pcu": c["pcu_total"],
+                      "annotated": bool(_render_path(vid)),
                       "checks": [x for x in c.get("checks", []) if x.get("level") != "ok"]})
     bins.sort(key=lambda b: b["t"])
     overlaps = _overlaps(vids)

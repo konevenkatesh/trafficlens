@@ -470,10 +470,30 @@ def enqueue_hour(site_id, hour_label, model_id=None):
         for m in todo:
             if m["video_id"] in pending or _CURRENT.get("video_id") == m["video_id"]:
                 continue
-            _Q.append({"video_id": m["video_id"], "name": m["name"],
+            _Q.append({"kind": "extract", "video_id": m["video_id"], "name": m["name"],
                        "site_id": site_id, "hour": hour_label, "model_id": model_id})
     _ensure_worker()
     return {"queued": len(todo), "hour": hour_label}
+
+
+def enqueue_render(video_id):
+    """Queue an annotated video for one recording.
+
+    Goes through the SAME single worker as extraction rather than starting its own
+    thread. Rendering decodes and re-encodes every frame; running it beside a detection
+    means two processes fighting one GPU and a machine that appears hung. Queued, the
+    surveyor gets both, just not at once.
+    """
+    v = db.one("SELECT name FROM videos WHERE id=?", video_id)
+    if not v:
+        return {"error": "no such recording"}
+    with _QLOCK:
+        if any(j["video_id"] == video_id and j["kind"] == "render" for j in _Q):
+            return {"queued": 0, "note": "already queued"}
+        _Q.append({"kind": "render", "video_id": video_id, "name": v["name"],
+                   "site_id": None, "hour": None, "model_id": None})
+    _ensure_worker()
+    return {"queued": 1, "name": v["name"]}
 
 
 def cancel(video_id=None):
@@ -492,7 +512,8 @@ def queue_state():
     with _QLOCK:
         return {"running": dict(_CURRENT) or None,
                 "waiting": [{"video_id": j["video_id"], "name": j["name"],
-                             "hour": j["hour"]} for j in _Q],
+                             "hour": j["hour"], "kind": j.get("kind", "extract")}
+                            for j in _Q],
                 "device": device_note()}
 
 
@@ -512,14 +533,21 @@ def _drain():
             _CURRENT.clear()
             if job:
                 _CURRENT.update({"video_id": job["video_id"], "name": job["name"],
-                                 "hour": job["hour"], "started": time.time()})
+                                 "hour": job["hour"], "kind": job.get("kind", "extract"),
+                                 "started": time.time()})
         if not job:
             return
+        kind = job.get("kind", "extract")
         jid = db.run("INSERT INTO jobs (video_id,kind,status,progress,started) "
-                     "VALUES (?,'extract','queued',0,?)", job["video_id"], time.time())
+                     "VALUES (?,?,'queued',0,?)", job["video_id"], kind, time.time())
         try:
-            engine.extract(job["video_id"], jid, model_id=job["model_id"] or default_model())
-            _axle(job["video_id"])
+            if kind == "render":
+                import render
+                render.render(job["video_id"], jid)
+            else:
+                engine.extract(job["video_id"], jid,
+                               model_id=job["model_id"] or default_model())
+                _axle(job["video_id"])
         except Exception as e:                      # one bad file must not stop the queue
             db.run("UPDATE jobs SET status='error', message=? WHERE id=?",
                    str(e)[:300], jid)
