@@ -117,7 +117,8 @@ def probe(path):
         out = subprocess.run(
             [_ffprobe(), "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=avg_frame_rate,nb_frames,width,height",
-             "-show_entries", "format=duration", "-of", "json", str(path)],
+             "-show_entries", "format=duration:format_tags=creation_time",
+             "-of", "json", str(path)],
             capture_output=True, text=True, timeout=120)
         d = _json.loads(out.stdout or "{}")
     except Exception:
@@ -138,8 +139,21 @@ def probe(path):
     frames = int(nb) if str(nb).isdigit() else (int(dur * fps) if dur else None)
     if not frames:
         return None
+    # Phone and camera recordings carry their real start time in the container, even when
+    # the filename is VID_0042.mp4 and says nothing. Far better than the file's mtime,
+    # which is when it was copied.
+    made = None
+    tags = (d.get("format") or {}).get("tags") or {}
+    raw = tags.get("creation_time") or tags.get("com.apple.quicktime.creationdate")
+    if raw:
+        try:
+            made = datetime.fromisoformat(
+                str(raw).replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            made = None
     return {"fps": round(fps, 3), "width": st.get("width"), "height": st.get("height"),
-            "frames": frames, "duration_s": round(dur or frames / fps, 1)}
+            "frames": frames, "duration_s": round(dur or frames / fps, 1),
+            "created_meta": made}
 
 
 # ───────────────────────────── the folder ─────────────────────────────
@@ -181,32 +195,93 @@ def attach(site_id, folder):
     db.run("UPDATE sites SET footage_dir=? WHERE id=?", str(Path(folder)), site_id)
     known = {r["path"] for r in db.rows("SELECT path FROM videos WHERE site_id=?", site_id)}
     covered = _covered_spans(site_id)
-    added, skipped, duplicates = [], [], []
+    added, skipped, duplicates, report = [], [], [], []
     for f in s["files"]:
         if f["path"] in known:
-            continue
-        if not f.get("clock"):
-            skipped.append(f["name"])       # undated: cannot be placed on the timeline
+            report.append({"name": f["name"], "status": "already",
+                           "note": "already attached"})
             continue
         if not f.get("fps"):
-            skipped.append(f["name"])       # unreadable: ffprobe could not measure it
+            skipped.append(f["name"])
+            report.append({"name": f["name"], "status": "unreadable",
+                           "note": "could not be read — not a video, or the file is damaged"})
             continue
+
+        # Every readable video is accepted. The start time is best-effort and always
+        # labelled with where it came from, because a missing clock is no reason to
+        # refuse a file: a phone recording is called VID_0042.mp4 and carries nothing in
+        # its name, and dropping it silently made the app look broken on the most obvious
+        # thing anyone would try first.
+        #
+        # In order of trustworthiness:
+        #   filename    the DVR wrote it — authoritative
+        #   metadata    the camera wrote it into the container — right for phone video
+        #   file-time   when the file was last written, i.e. usually when it was COPIED
+        #   assumed     nothing at all was available; placed after the last known
+        #               recording so the timeline still has an order
+        clock, source = f.get("clock"), "filename"
+        if not clock and f.get("created_meta"):
+            clock, source = f["created_meta"], "metadata"
+        if not clock:
+            try:
+                clock = datetime.fromtimestamp(
+                    Path(f["path"]).stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                source = "file-time"
+            except OSError:
+                clock, source = None, "assumed"
+        if not clock:
+            base = max([e for _, e in covered], default=datetime.now())
+            clock = base.strftime("%Y-%m-%d %H:%M:%S")
+            source = "assumed"
+
+        # A guessed clock that collides with footage already placed gets moved to the end
+        # instead. Files copied in one go share an mtime to the second, so a folder of
+        # phone clips would otherwise stack on top of each other at one instant -- one
+        # hour claiming to hold six simultaneous recordings. Laid end to end they are at
+        # least in a sensible order, and the source is labelled so nobody mistakes it for
+        # the real time. A filename clock is never moved: that one is authoritative.
+        if source != "filename":
+            t0 = datetime.strptime(clock, "%Y-%m-%d %H:%M:%S")
+            dur = timedelta(seconds=f.get("duration_s") or 0)
+            if any(t0 < e and t0 + dur > s0 for s0, e in covered):
+                t0 = max(e for _, e in covered)
+                clock = t0.strftime("%Y-%m-%d %H:%M:%S")
+        f = {**f, "clock": clock}
         # Already on the timeline under a different filename. This happens whenever the
         # footage has been cut into clips: the folder still holds the original 80-minute
         # recording, and registering it alongside the five 15-minute clips made from it
         # puts the same traffic on the timeline twice. Counting both would double every
         # vehicle in that hour, and the total would still look entirely plausible.
-        if _overlap_fraction(f, covered) >= 0.9:
+        #
+        # Only for clocks worth trusting. A guessed one says nothing about what the
+        # footage contains, and two phone clips copied in the same second are not the
+        # same recording -- rejecting them as duplicates would throw away real footage.
+        if source == "filename" and _overlap_fraction(f, covered) >= 0.9:
             duplicates.append(f["name"])
+            report.append({"name": f["name"], "status": "duplicate",
+                           "note": "this footage is already on the timeline under "
+                                   "another name"})
             continue
         db.run("""INSERT INTO videos (path,name,fps,frames,width,height,start_clock,
                                       site_id,clock_source,created)
-                  VALUES (?,?,?,?,?,?,?,?,'filename',?)""",
+                  VALUES (?,?,?,?,?,?,?,?,?,?)""",
                f["path"], f["name"], f["fps"], f.get("frames"), f.get("width"),
-               f.get("height"), f["clock"], site_id, time.time())
+               f.get("height"), clock, site_id, source, time.time())
         added.append(f["name"])
+        try:
+            _t0 = datetime.strptime(clock, "%Y-%m-%d %H:%M:%S")
+            covered.append((_t0, _t0 + timedelta(seconds=f.get("duration_s") or 0)))
+        except (ValueError, TypeError):
+            pass
+        report.append({"name": f["name"], "status": "added", "clock": clock,
+                       "clock_source": source,
+                       "minutes": round((f.get("duration_s") or 0) / 60, 1),
+                       "note": ("start time taken from the file's own timestamp — check it"
+                                if source == "file-time" else "")})
     return {"folder": str(Path(folder)), "added": added, "skipped": skipped,
-            "duplicates": duplicates,
+            "duplicates": duplicates, "report": report,
+            "guessed_clock": [r["name"] for r in report
+                              if r.get("clock_source") == "file-time"],
             "total_files": len(s["files"]), "undated": s["undated"]}
 
 
@@ -464,7 +539,10 @@ def _axle(video_id):
         import axle_pass
         import sites
         if not sites.lines_for(video_id)[0]:
-            return                                  # no line: nothing crossed, nothing to judge
+            # No line yet, so nothing has "crossed" and there is nothing to judge. Not an
+            # error: the line is normally drawn after the first hour is detected, and the
+            # pass runs on the next extraction or when the report is built.
+            return
         axle_pass.run(video_id)
     except Exception:
         pass

@@ -92,10 +92,13 @@ def _progress(site_id):
     return {"folder": (site or {}).get("footage_dir"), "files": len(ids),
             "extracted": extracted, "tracks": counted, "verified": verified,
             "line": has_line,
+            # The line comes AFTER detection, because that is when there is a frame to
+            # draw it on and some idea of where the traffic runs. Counting, review and
+            # the report all need it; detection does not.
             "steps": [
                 {"key": "folder", "label": "Footage attached", "done": len(ids) > 0},
-                {"key": "line", "label": "Count line drawn", "done": has_line},
                 {"key": "extract", "label": "Vehicles detected", "done": extracted > 0},
+                {"key": "line", "label": "Count line drawn", "done": has_line},
                 {"key": "review", "label": "Reviewed", "done": verified > 0},
             ]}
 
@@ -183,11 +186,44 @@ def browse(path: str = ""):
                       key=lambda c: c.name.lower())
     except (PermissionError, OSError) as e:
         raise HTTPException(400, f"cannot read {p}: {e}")
-    vids = sum(1 for c in p.iterdir()
-               if c.is_file() and c.suffix.lower() in work.VIDEO_EXT)
+    try:
+        vids = sum(1 for c in p.iterdir()
+                   if c.is_file() and c.suffix.lower() in work.VIDEO_EXT)
+    except (PermissionError, OSError):
+        vids = 0
     return {"path": str(p), "parent": str(p.parent) if p.parent != p else None,
             "dirs": [{"name": c.name, "path": str(c)} for c in kids],
+            "drives": _drives(),
             "videos_here": vids}
+
+
+def _drives():
+    """Every place a folder could live, including removable media.
+
+    On Windows the picker starts in C:\\Users\\<name> and the parent of C:\\ is C:\\,
+    so walking up never leaves the system drive -- and footage arrives on a USB disk or an
+    external drive, which is to say never on C:. Enumerating the roots is the only way out.
+    """
+    out = []
+    if os.name == "nt":
+        import string
+        for letter in string.ascii_uppercase:
+            d = Path(f"{letter}:\\")
+            if d.exists():
+                out.append({"name": f"{letter}:", "path": str(d)})
+    else:
+        out.append({"name": "/", "path": "/"})
+        vol = Path("/Volumes")           # macOS mounts removable media here
+        if vol.is_dir():
+            try:
+                for c in sorted(vol.iterdir()):
+                    if c.is_dir():
+                        out.append({"name": c.name, "path": str(c)})
+            except OSError:
+                pass
+    home = Path.home()
+    out.append({"name": "Home", "path": str(home)})
+    return out
 
 
 @app.post("/api/stations/{site_id}/folder")
@@ -262,9 +298,12 @@ class HourIn(BaseModel):
 
 @app.post("/api/stations/{site_id}/hours/{hour}/extract")
 def extract_hour(site_id: int, hour: str, body: HourIn | None = None):
-    if not db.jload((db.one("SELECT default_line FROM sites WHERE id=?", site_id)
-                     or {}).get("default_line"), []):
-        raise HTTPException(400, "draw the count line first — nothing can be counted without it")
+    # Deliberately does NOT require a count line. Detection finds vehicles; the line only
+    # decides which of them crossed, and that is applied at counting time. Demanding the
+    # line first meant a surveyor had to draw one over footage they had not looked at
+    # yet, before the app could even show them a frame worth drawing on. Extract first,
+    # draw the line when you can see what you are drawing on -- which is the order people
+    # actually work in.
     r = work.enqueue_hour(site_id, hour, (body.model_id if body else None))
     if r.get("error"):
         raise HTTPException(400, r["error"])

@@ -135,14 +135,18 @@ async function viewStation(id) {
       </ul></div></div>` : ''}
 
     <div id="stepFolder"></div>
-    ${p.folder ? `<div id="stepLine"></div>` : ''}
-    ${p.folder && p.line ? `<div id="stepHours"></div>` : ''}
+    ${/* Hours appear as soon as there is footage. They used to be gated behind the count
+          line, which meant a surveyor was asked to draw a line over footage the app had
+          not yet shown them — and if nothing attached, the screen simply ended there
+          with no explanation. */''}
+    ${p.files ? `<div id="stepHours"></div>` : ''}
+    ${p.files ? `<div id="stepLine"></div>` : ''}
     ${p.tracks ? `<div id="stepAfter"></div>` : ''}
   </div>`;
 
   paintFolder(id, d);
-  if (p.folder) paintLine(id, d);
-  if (p.folder && p.line) paintHours(id, d);
+  if (p.files) paintHours(id, d);
+  if (p.files) paintLine(id, d);
   if (p.tracks) paintAfter(id, d);
 
   clearInterval(POLL);
@@ -157,7 +161,10 @@ function paintFolder(id, d) {
     el.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="card-body"
       style="display:flex;align-items:center;gap:14px">
       <div style="flex:1"><b>${p.files} recording(s)</b>
-        <div class="muted-sm" style="font-family:ui-monospace,monospace">${esc(p.folder)}</div></div>
+        <div class="muted-sm" style="font-family:ui-monospace,monospace">${esc(p.folder)}</div>
+        ${d.guessed ? `<div class="muted-sm" style="color:var(--cc-warn-fg)">
+          ${d.guessed} of them had no date in the filename — the file's own timestamp was
+          used, which is often the copy time. Check the hours below look right.</div>` : ''}</div>
       <button class="btn ghost" id="reFolder">Check for new files</button>
       <button class="btn ghost" id="chFolder">Change folder</button>
     </div></div>`;
@@ -181,6 +188,31 @@ function paintFolder(id, d) {
   $('#pick').onclick = () => openPicker(id);
 }
 
+/* What the folder scan actually did, file by file.
+   "0 recordings attached" is useless on its own: the surveyor cannot tell a wrong folder
+   from unreadable files from names the app could not date. Every file gets a line. */
+function showScan(r, folder) {
+  const rows = r.report || [];
+  const badge = { added: 'ok', already: '', duplicate: 'warn',
+                  unreadable: 'warn', 'no-date': 'warn' };
+  modal('Nothing was attached from that folder', `
+    <p class="muted-sm" style="margin:0 0 10px;font-family:ui-monospace,monospace">
+      ${esc(folder)}</p>
+    ${rows.length ? `<div class="lv-table" style="max-height:46vh;overflow:auto">
+      <table><thead><tr><th>File</th><th>What happened</th></tr></thead><tbody>
+      ${rows.map(x => `<tr><td class="mono">${esc(x.name)}</td>
+        <td><span class="status ${badge[x.status] || ''}">${esc(x.status)}</span>
+          ${x.note ? `<div class="muted-sm">${esc(x.note)}</div>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>`
+      : `<p>No video files at all in this folder. The app looks for
+         ${esc([...'mp4 avi mkv mov m4v ts dav'.split(' ')].join(', '))} files, and does
+         not look inside sub-folders — pick the folder that holds the recordings
+         themselves.</p>`}`,
+    [{ label: 'Pick a different folder', primary: true,
+       act: () => { closeModal(); openPicker(null, folder); } },
+     { label: 'Close', act: closeModal }]);
+}
+
 async function openPicker(id, start) {
   let cur = start || '';
   const draw = async () => {
@@ -189,6 +221,20 @@ async function openPicker(id, start) {
     catch (e) { return toast(e.message, true); }
     cur = b.path;
     modal(`Choose the footage folder`, `
+      ${/* Typing or pasting a path is often the fastest way there, and on Windows it is
+            sometimes the ONLY way: a mapped network share or a drive letter that is not
+            in the list. Clicking through is still there for anyone who prefers it. */''}
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <input class="field" id="pkPath" placeholder="or paste a path, e.g. D:\\Footage\\KDP-01"
+               value="${esc(b.path)}" style="flex:1;font-family:ui-monospace,monospace">
+        <button class="btn secondary" id="pkGo">Go</button>
+      </div>
+      ${/* Footage arrives on a USB stick or an external drive — practically never on the
+            system drive — and walking up from C:\Users never reaches one. */''}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+        ${(b.drives || []).map(x => `<button class="btn sm ghost"
+          data-go="${esc(x.path)}">💾 ${esc(x.name)}</button>`).join('')}
+      </div>
       <div class="picker">
         <div class="here">${esc(b.path)}</div>
         ${b.parent ? `<button data-go="${esc(b.parent)}">↰ &nbsp;up one level</button>` : ''}
@@ -202,14 +248,24 @@ async function openPicker(id, start) {
          act: async () => {
            try {
              const r = await api(`/api/stations/${id}/folder`, { folder: cur });
+             if (!r.added.length) {
+               // Never close on a no-op. "0 attached" with the dialog gone looks exactly
+               // like the app ignoring the click, which is what happened before.
+               return showScan(r, cur);
+             }
              toast(`${r.added.length} recording(s) attached`
-                   + (r.skipped.length ? `, ${r.skipped.length} skipped` : ''));
+                   + (r.guessed_clock.length
+                      ? ` — ${r.guessed_clock.length} had no date in the filename` : ''));
              closeModal(); viewStation(id);
            } catch (e) { toast(e.message, true); }
          } }]);
     document.querySelectorAll('[data-go]').forEach(b2 => {
       b2.onclick = () => { cur = b2.dataset.go; draw(); };
     });
+    const box = $('#pkPath'), go = $('#pkGo');
+    const jump = () => { const v = box.value.trim(); if (v) { cur = v; draw(); } };
+    if (go) go.onclick = jump;
+    if (box) box.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); jump(); } };
   };
   draw();
 }
@@ -224,7 +280,11 @@ function paintLine(id, d) {
       <b>${has ? 'Count line drawn' : 'Draw the count line'}</b>
       <div class="muted-sm">${has
         ? 'One line, used by every recording at this station.'
-        : 'Vehicles are counted when they cross this line. Draw it once.'}</div>
+        : d.progress.extracted
+          ? 'Vehicles are counted when they cross this line. Draw it once — detection is '
+            + 'already done, so this is the last thing before the report.'
+          : 'Vehicles are counted when they cross this line. You can draw it now, or '
+            + 'detect an hour first and draw it once you have seen the road.'}</div>
     </div>
     <button class="btn ${has ? 'ghost' : 'primary'}" id="drawLine">
       ${has ? 'Redraw' : 'Draw the line'}</button>
