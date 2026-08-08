@@ -75,7 +75,16 @@ a = Analysis(                                   # noqa: F821
     hookspath=[],
     runtime_hooks=[],
     # Nothing here is a survey feature, and each drags in large dependency trees.
-    excludes=["matplotlib", "tkinter", "pytest", "IPython", "notebook",
+    #
+    # matplotlib is NOT in this list, though it looks like it belongs: ultralytics
+    # imports it from utils/plotting.py, which loads on any inference path. Excluding it
+    # produced a build that installed, started, registered its models, accepted footage
+    # -- and then failed every extraction with "No module named 'matplotlib'". The only
+    # visible symptom was an hour that would not detect.
+    #
+    # tkinter stays excluded: matplotlib only wants it for an interactive backend, and
+    # MPLBACKEND=Agg (set in work.py) means one is never asked for.
+    excludes=["tkinter", "pytest", "IPython", "notebook",
               "PyQt5", "PySide2", "wandb", "tensorboard"],
     noarchive=False,
 )

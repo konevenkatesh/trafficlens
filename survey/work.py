@@ -50,6 +50,9 @@ sys.path.append(str(ROOT / "lab"))
 #
 # Nothing this app does needs the internet. The one exception is voice recognition, which
 # is opt-in, off by default, and disabled in the UI when the browser reports no network.
+# matplotlib is pulled in by ultralytics. Agg is the non-interactive backend: without
+# this it hunts for a GUI toolkit that a frozen build deliberately does not ship.
+os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault("YOLO_OFFLINE", "1")
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 os.environ.setdefault("YOLO_CONFIG_DIR",

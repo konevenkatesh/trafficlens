@@ -23,3 +23,8 @@ openpyxl==3.1.5
 numpy==2.4.6
 pillow==12.3.0
 PyYAML==6.0.3
+
+# Not used by this app directly — ultralytics imports it from utils/plotting.py on any
+# inference path. Pinned and declared so it cannot be mistaken for an incidental
+# dependency and dropped again.
+matplotlib==3.11.1
