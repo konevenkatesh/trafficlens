@@ -79,9 +79,29 @@ def count_video(video_id, lines, birth_lookback_s=None):
             # the endpoints jitter across the infinite line and phantom-count)
             t = ((px - lx1) * dx + (py - ly1) * dy) / L2
             return -0.08 <= t <= 1.08
+        # How many source frames apart the stored points are. The detector may have run
+        # with a stride -- 30fps phone video is sampled down to ~15 -- so a track that
+        # lasted a full second holds fewer points than it would have at stride 1.
+        # Thresholds counted in POINTS have to be divided by that, or striding silently
+        # drops real vehicles for being "too short" when they were nothing of the kind.
+        # Measured from the data rather than passed in, so it is right for footage
+        # extracted before this existed.
+        gaps = []
+        for _p in traj.values():
+            for a, b in zip(_p, _p[1:]):
+                if b[0] > a[0]:
+                    gaps.append(b[0] - a[0])
+                if len(gaps) > 400:
+                    break
+            if len(gaps) > 400:
+                break
+        stride = min(gaps) if gaps else 1
+        min_points = max(2, int(round(MIN_TRACK_FRAMES / stride)))
+        diag["frame_stride"] = stride
+
         for tid, path in traj.items():
             t = tracks.get(tid)
-            if not t or len(path) < MIN_TRACK_FRAMES:
+            if not t or len(path) < min_points:
                 diag["dropped_too_short"] += 1
                 continue
             ov = t["class_override"]
@@ -120,10 +140,11 @@ def count_video(video_id, lines, birth_lookback_s=None):
             # unbroken run the track opens with, and refuses to guess from a stub.
             span = path[-1][0] - path[0][0] + 1
             run = 1
-            while run < len(path) and path[run][0] - path[run - 1][0] <= 2:
+            while run < len(path) and path[run][0] - path[run - 1][0] <= 2 * stride:
                 run += 1
-            if (len(path) >= MIN_TRACK_FRAMES and span >= MIN_TRACK_FRAMES
-                    and run >= BIRTH_MIN_RUN):
+            # span stays in FRAMES (a real duration); the point counts are scaled.
+            if (len(path) >= min_points and span >= MIN_TRACK_FRAMES
+                    and run >= max(2, int(round(BIRTH_MIN_RUN / stride)))):
                 f0, x0, y0 = path[0]
                 f1_, x1_, y1_ = path[min(6, run - 1)]
                 vx = (x1_ - x0) / max(f1_ - f0, 1)

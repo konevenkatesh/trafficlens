@@ -87,6 +87,41 @@ def probe(path):
     return fps, frames, int(s["width"]), int(s["height"]), clock
 
 
+def device():
+    """The fastest device this machine actually has.
+
+    This was hardcoded to "mps", which is an Apple GPU and does not exist on Windows --
+    so every Windows machine fell back to the processor, INCLUDING ones with an NVIDIA
+    card sitting idle. The app told the surveyor it had found no GPU and then took nine
+    times longer than it needed to.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
+
+# Frames per second the detector actually needs to see. The whole system was tuned on
+# ~12fps DVR footage, and a tracker does not get better on a vehicle it sees 30 times a
+# second instead of 12 -- it just costs two and a half times as much. Phone video is
+# 30fps, so a one-minute clip was doing the work of two and a half minutes of station
+# footage for no gain.
+TARGET_FPS = 12.0
+
+
+def stride_for(fps):
+    """How many source frames to skip so the detector sees roughly TARGET_FPS."""
+    try:
+        return max(1, int(round(float(fps or 0) / TARGET_FPS)))
+    except (TypeError, ValueError):
+        return 1
+
+
 def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
     """Runs in a worker thread. Stores every tracked box into track_points.
 
@@ -110,10 +145,16 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
         span = {}
         buf = []
         t0 = time.time()
+        stride = stride_for(v["fps"])
+        dev = device()
         results = model.track(source=v["path"], stream=True, persist=True,
                               tracker=str(TRACKER), conf=conf, imgsz=imgsz,
-                              vid_stride=1, device="mps", verbose=False)
-        for i, r in enumerate(results):
+                              vid_stride=stride, device=dev, verbose=False)
+        # `i` counts the frames the detector SAW, not the frames in the file. Every frame
+        # index stored has to be the real one, or a 30fps clip reports its traffic three
+        # times too early -- clocks, 15-minute bins and the report all divide by fps.
+        for n, r in enumerate(results):
+            i = n * stride
             if r.boxes.id is not None:
                 for b, c, tid, cf in zip(r.boxes.xyxy.cpu().numpy(),
                                          r.boxes.cls.cpu().numpy(),
@@ -127,7 +168,7 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
             if len(buf) >= 2000:
                 db.runmany("INSERT INTO track_points VALUES (?,?,?,?,?,?,?,?)", buf)
                 buf = []
-            if i % 250 == 0:
+            if n % 250 == 0:
                 pct = 100.0 * i / max(v["frames"], 1)
                 rate = (i / v["fps"]) / max(time.time() - t0, 1e-6)
                 db.run("UPDATE jobs SET progress=?, message=? WHERE id=?",
