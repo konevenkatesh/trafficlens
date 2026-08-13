@@ -411,8 +411,51 @@ def _is_night(t):
 # other and double the memory. On a CPU-only laptop a second worker is actively harmful.
 _Q = []
 _QLOCK = threading.Lock()
-_WORKER = None
-_CURRENT = {}
+_WORKERS = []
+_CURRENT = {}          # worker index -> the job it is running
+
+
+def worker_count():
+    """How many clips to detect at once.
+
+    Measured, not guessed. On an RTX 4090 pure inference runs at 92 fps but the whole
+    pipeline only reaches 67 -- a 27% gap where the GPU sits idle waiting for Python to
+    do NMS, run the tracker, copy boxes off the device and buffer them to SQLite. One
+    stream cannot fill a card that fast; several can overlap each other's gaps.
+
+    On the M4 that gap did not exist (47 fps pipeline against 46 fps inference), which is
+    exactly why this stayed single-threaded until now: a second worker there would only
+    have halved the first. So the pool is sized to the device rather than the CPU count.
+
+      cpu   1  -- extraction is already using every core; more workers just thrash
+      mps   1  -- one Apple GPU, no idle gap to fill, and 16GB shared with the system
+      cuda  by VRAM, capped at 4 -- past that the returns are small and the risk of
+            an out-of-memory failure mid-survey is not worth it
+    """
+    import engine
+    dev = engine.device()
+
+    # MPS is capped at 1 and the override cannot lift it. PyTorch's Metal backend does not
+    # run models concurrently from several threads: forcing 3 workers here produced three
+    # extractions that sat at 0% and never finished -- no error, no progress, just stuck.
+    # A configurable knob that can hang the app is not a knob.
+    if dev == "mps":
+        return 1
+
+    forced = os.environ.get("TRAFFICLENS_WORKERS")
+    if forced:
+        try:
+            return max(1, int(forced))
+        except ValueError:
+            pass
+    if dev == "cuda":
+        try:
+            import torch
+            vram = torch.cuda.get_device_properties(0).total_mem / 1e9
+            return max(1, min(4, int(vram // 6)))
+        except Exception:
+            return 1
+    return 1
 
 
 def default_model():
@@ -468,7 +511,8 @@ def enqueue_hour(site_id, hour_label, model_id=None):
     with _QLOCK:
         pending = {j["video_id"] for j in _Q}
         for m in todo:
-            if m["video_id"] in pending or _CURRENT.get("video_id") == m["video_id"]:
+            busy = {c["video_id"] for c in _CURRENT.values() if c}
+            if m["video_id"] in pending or m["video_id"] in busy:
                 continue
             _Q.append({"kind": "extract", "video_id": m["video_id"], "name": m["name"],
                        "site_id": site_id, "hour": hour_label, "model_id": model_id})
@@ -505,12 +549,16 @@ def cancel(video_id=None):
             _Q.clear()
         else:
             _Q[:] = [j for j in _Q if j["video_id"] != video_id]
-        return {"dropped": before - len(_Q), "still_running": dict(_CURRENT)}
+        return {"dropped": before - len(_Q),
+                "still_running": [dict(c) for c in _CURRENT.values() if c]}
 
 
 def queue_state():
     with _QLOCK:
-        return {"running": dict(_CURRENT) or None,
+        running = [dict(v) for v in _CURRENT.values() if v]
+        return {"running": running[0] if running else None,   # kept: single-job callers
+                "running_all": running,
+                "workers": worker_count(),
                 "waiting": [{"video_id": j["video_id"], "name": j["name"],
                              "hour": j["hour"], "kind": j.get("kind", "extract")}
                             for j in _Q],
@@ -518,23 +566,27 @@ def queue_state():
 
 
 def _ensure_worker():
-    global _WORKER
-    if _WORKER and _WORKER.is_alive():
-        return
-    _WORKER = threading.Thread(target=_drain, daemon=True)
-    _WORKER.start()
+    """Top the pool up to worker_count(), never above it."""
+    global _WORKERS
+    _WORKERS = [w for w in _WORKERS if w.is_alive()]
+    want = worker_count()
+    while len(_WORKERS) < want:
+        i = len(_WORKERS)
+        t = threading.Thread(target=_drain, args=(i,), daemon=True)
+        _WORKERS.append(t)
+        t.start()
 
 
-def _drain():
+def _drain(slot):
     import engine
     while True:
         with _QLOCK:
             job = _Q.pop(0) if _Q else None
-            _CURRENT.clear()
+            _CURRENT.pop(slot, None)
             if job:
-                _CURRENT.update({"video_id": job["video_id"], "name": job["name"],
-                                 "hour": job["hour"], "kind": job.get("kind", "extract"),
-                                 "started": time.time()})
+                _CURRENT[slot] = {"video_id": job["video_id"], "name": job["name"],
+                                  "hour": job["hour"], "kind": job.get("kind", "extract"),
+                                  "started": time.time()}
         if not job:
             return
         kind = job.get("kind", "extract")
@@ -553,7 +605,7 @@ def _drain():
                    str(e)[:300], jid)
         finally:
             with _QLOCK:
-                _CURRENT.clear()
+                _CURRENT.pop(slot, None)
 
 
 def _axle(video_id):

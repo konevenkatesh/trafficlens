@@ -95,6 +95,9 @@ def device():
     card sitting idle. The app told the surveyor it had found no GPU and then took nine
     times longer than it needed to.
     """
+    forced = os.environ.get("TRAFFICLENS_DEVICE")
+    if forced:
+        return forced
     try:
         import torch
         if torch.cuda.is_available():

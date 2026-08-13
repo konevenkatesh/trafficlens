@@ -313,19 +313,21 @@ def extract_hour(site_id: int, hour: str, body: HourIn | None = None):
 @app.get("/api/queue")
 def queue():
     q = work.queue_state()
-    cur = q.get("running")
-    if cur:
-        # Match the job KIND that is actually running. Hardcoding 'extract' meant a
-        # render read the progress of some earlier extraction — reporting 100% from the
-        # first second, so the bar was a lie and nothing could be waited on.
+    # Several clips can be detecting at once now, so every one of them needs its own
+    # progress. Matched on job KIND as well as video: hardcoding 'extract' meant a render
+    # read the progress of some earlier extraction and showed 100% from the first second.
+    for cur in q.get("running_all") or []:
         j = db.one("""SELECT progress,message,started FROM jobs WHERE video_id=? AND kind=?
                       ORDER BY id DESC LIMIT 1""",
                    cur["video_id"], cur.get("kind") or "extract")
-        if j:
-            cur.update({"progress": j["progress"] or 0, "message": j["message"]})
-            pct = (j["progress"] or 0) / 100.0
-            el = time.time() - (j["started"] or time.time())
-            cur["eta_s"] = round(el / pct - el) if pct > 0.02 else None
+        if not j:
+            continue
+        cur.update({"progress": j["progress"] or 0, "message": j["message"]})
+        pct = (j["progress"] or 0) / 100.0
+        el = time.time() - (j["started"] or time.time())
+        cur["eta_s"] = round(el / pct - el) if pct > 0.02 else None
+    ra = q.get("running_all") or []
+    q["running"] = ra[0] if ra else None      # older single-job callers still work
     return q
 
 

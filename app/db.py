@@ -116,6 +116,11 @@ def conn():
         _local.c = sqlite3.connect(DB_PATH, check_same_thread=False)
         _local.c.row_factory = sqlite3.Row
         _local.c.execute("PRAGMA journal_mode=WAL")
+        # WAL lets readers run beside a writer, but two WRITERS still serialise -- and
+        # without a busy timeout the loser raises "database is locked" immediately rather
+        # than waiting. That is fine with one extraction at a time and fatal with several:
+        # each one bulk-inserts thousands of track points, so they WILL collide.
+        _local.c.execute("PRAGMA busy_timeout=30000")
         _local.c.executescript(SCHEMA)
         _migrate(_local.c)
     return _local.c

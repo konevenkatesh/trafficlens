@@ -369,23 +369,28 @@ function paintHours(id, d) {
 function paintQueue(q) {
   const el = $('#qbar');
   if (!el) return;
-  const r = q && q.running;
-  if (!r && !(q && (q.waiting || []).length)) { el.innerHTML = ''; return; }
+  const all = (q && q.running_all) || (q && q.running ? [q.running] : []);
+  if (!all.length && !(q && (q.waiting || []).length)) { el.innerHTML = ''; return; }
+  const wait = (q.waiting || []).length;
   el.innerHTML = `<div style="border:1px solid var(--cc-acc);border-radius:var(--cc-r-md);
       padding:12px;background:var(--cc-acc-bg);margin-top:10px">
-    <div style="display:flex;align-items:center;gap:12px">
-      <div style="flex:1">
-        <b>${r ? esc(r.name) : 'Queued'}</b>
-        <div class="muted-sm" id="qsub">${r
-          ? `${Math.round(r.progress || 0)}%${r.eta_s ? ` · ${mins(r.eta_s)} left` : ''}`
-          : ''}${(q.waiting || []).length ? ` · ${q.waiting.length} more waiting` : ''}</div>
-      </div>
-      <button class="btn ghost sm" id="qcancel">Stop after this one</button>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+      <div style="flex:1"><b>${all.length
+        ? `Detecting ${all.length} recording${all.length > 1 ? 's' : ''}` : 'Queued'}</b>
+        <span class="muted-sm">${wait ? ` · ${wait} more waiting` : ''}${
+          q.workers > 1 ? ` · ${q.workers} at a time` : ''}</span></div>
+      <button class="btn ghost sm" id="qcancel">Stop after these</button>
     </div>
-    <div class="bar" style="height:6px;background:var(--cc-surface);border-radius:3px;
-         margin-top:10px;overflow:hidden">
-      <i id="qbarfill" style="display:block;height:100%;background:var(--cc-acc);
-         width:${Math.round((r && r.progress) || 0)}%"></i></div>
+    ${/* One bar per running clip. With a pool, a single bar would jump between clips and
+          read as progress going backwards. */''}
+    <div id="qbars">${all.map((r, i) => `
+      <div style="margin-top:${i ? 8 : 0}px">
+        <div class="muted-sm" data-qsub="${i}">${esc(r.name)} — ${Math.round(r.progress || 0)}%${
+          r.eta_s ? ` · ${mins(r.eta_s)} left` : ''}</div>
+        <div style="height:6px;background:var(--cc-surface);border-radius:3px;overflow:hidden">
+          <i data-qfill="${i}" style="display:block;height:100%;background:var(--cc-acc);
+             width:${Math.round(r.progress || 0)}%"></i></div>
+      </div>`).join('')}</div>
   </div>`;
   const c = $('#qcancel');
   if (c) c.onclick = async () => {
@@ -399,14 +404,19 @@ function paintQueue(q) {
 async function tick(id) {
   const q = await api('/api/queue', undefined, 'GET').catch(() => null);
   if (!q) return;
-  const r = q.running;
-  if (!r && !(q.waiting || []).length) { clearInterval(POLL); return viewStation(id); }
-  const fill = $('#qbarfill'), sub = $('#qsub');
-  if (!fill) return viewStation(id);
-  fill.style.width = `${Math.round((r && r.progress) || 0)}%`;
-  if (sub) sub.textContent = (r
-    ? `${Math.round(r.progress || 0)}%${r.eta_s ? ` · ${mins(r.eta_s)} left` : ''}` : '')
-    + ((q.waiting || []).length ? ` · ${q.waiting.length} more waiting` : '');
+  const all = q.running_all || (q.running ? [q.running] : []);
+  if (!all.length && !(q.waiting || []).length) { clearInterval(POLL); return viewStation(id); }
+  const bars = document.querySelectorAll('[data-qfill]');
+  // The number of running clips changes as the pool drains; a full repaint is the only
+  // honest way to add or remove a bar.
+  if (bars.length !== all.length) return viewStation(id);
+  all.forEach((r, i) => {
+    const f = document.querySelector(`[data-qfill="${i}"]`);
+    const t = document.querySelector(`[data-qsub="${i}"]`);
+    if (f) f.style.width = `${Math.round(r.progress || 0)}%`;
+    if (t) t.textContent = `${r.name} — ${Math.round(r.progress || 0)}%`
+      + (r.eta_s ? ` · ${mins(r.eta_s)} left` : '');
+  });
 }
 
 /* ── steps 4 & 5: review and report ── */
