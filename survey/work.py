@@ -448,13 +448,21 @@ def worker_count():
             return max(1, int(forced))
         except ValueError:
             pass
+    # Three, measured on an RTX 4090 -- not derived from VRAM, which turned out to be
+    # entirely the wrong model. Peak use was 0.5 GB, so memory was never the constraint;
+    # sizing by it would have picked 4 on a 24GB card and made the machine SLOWER.
+    #
+    #   1 worker   84.7 fps   1.00x
+    #   2 workers  91.7 fps   1.08x
+    #   3 workers 101.8 fps   1.20x
+    #   4 workers  56.4 fps   0.67x   <- reproduced four times, not noise
+    #
+    # Whatever saturates at three collapses at four (128 vCPUs were available, so it is
+    # not core count -- most likely the GIL plus CUDA context switching). The cliff is
+    # sharp and the gain past two is small, so this stops at three and does not scale
+    # with the card.
     if dev == "cuda":
-        try:
-            import torch
-            vram = torch.cuda.get_device_properties(0).total_mem / 1e9
-            return max(1, min(4, int(vram // 6)))
-        except Exception:
-            return 1
+        return 3
     return 1
 
 
