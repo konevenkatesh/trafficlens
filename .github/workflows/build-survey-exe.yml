@@ -121,17 +121,24 @@ jobs:
         # stick — which is how footage reaches some of these offices in the first place.
         run: Compress-Archive -Path dist/TrafficLens/* -DestinationPath TrafficLens-portable.zip
 
+      # Three days, not thirty. Each build stores ~800MB and a private repo's free
+      # artifact allowance is a fraction of what nine builds consume: the run before this
+      # one built perfectly and then failed on "Artifact storage quota has been hit",
+      # having already produced a working installer. Builds are cheap to repeat and these
+      # are pure outputs — keeping a month of them buys nothing and costs the next build.
       - uses: actions/upload-artifact@v4
         with:
           name: TrafficLens-Setup
           path: TrafficLens-Setup.exe
-          retention-days: 30
+          retention-days: 3
+          compression-level: 0     # already a compressed installer; re-zipping is wasted
 
       - uses: actions/upload-artifact@v4
         with:
           name: TrafficLens-portable
           path: TrafficLens-portable.zip
-          retention-days: 30
+          retention-days: 3
+          compression-level: 0     # already a zip
 
   # ── the test that matters: install the thing and use it ──
   # The build job only proves the process starts and knows what a detector is. Everything
