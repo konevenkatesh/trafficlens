@@ -18,6 +18,9 @@ on:
             ".github/workflows/build-survey-exe.yml"]
   workflow_dispatch:
 
+permissions:
+  contents: write        # the build publishes itself to a release
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -121,24 +124,29 @@ jobs:
         # stick — which is how footage reaches some of these offices in the first place.
         run: Compress-Archive -Path dist/TrafficLens/* -DestinationPath TrafficLens-portable.zip
 
-      # Three days, not thirty. Each build stores ~800MB and a private repo's free
-      # artifact allowance is a fraction of what nine builds consume: the run before this
-      # one built perfectly and then failed on "Artifact storage quota has been hit",
-      # having already produced a working installer. Builds are cheap to repeat and these
-      # are pure outputs — keeping a month of them buys nothing and costs the next build.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: TrafficLens-Setup
-          path: TrafficLens-Setup.exe
-          retention-days: 3
-          compression-level: 0     # already a compressed installer; re-zipping is wasted
+      # Published to a ROLLING RELEASE, not as an artifact.
+      #
+      # Two builds in a row froze cleanly, produced a working installer, and then died on
+      # "Artifact storage quota has been hit". Deleting 7.36GB of old artifacts did not
+      # help immediately -- GitHub recalculates that usage every 6-12 hours, so every
+      # build in that window fails at the last step having done all the work.
+      #
+      # Releases draw on repository storage instead, which is far larger, and one tag is
+      # overwritten each time rather than accumulating. It is also simply a better place
+      # for a build: a stable URL somebody can be sent, instead of a login-gated artifact
+      # that expires.
+      - name: Publish the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest \
+            --title "Latest build" --notes "Build ${{ github.run_number }} from ${{ github.sha }}" \
+            --target "${{ github.sha }}" \
+            TrafficLens-Setup.exe TrafficLens-portable.zip
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: TrafficLens-portable
-          path: TrafficLens-portable.zip
-          retention-days: 3
-          compression-level: 0     # already a zip
+
 
   # ── the test that matters: install the thing and use it ──
   # The build job only proves the process starts and knows what a detector is. Everything
@@ -154,9 +162,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: TrafficLens-Setup
+      - name: Fetch the installer that was just published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release download latest --pattern "TrafficLens-Setup.exe" --clobber
 
       - name: Install it the way a surveyor would
         shell: pwsh
