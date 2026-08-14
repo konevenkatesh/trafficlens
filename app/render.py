@@ -230,6 +230,20 @@ def render(video_id, job_id):
         for p in db.rows("SELECT track_id, frame, x1, y1, x2, y2 FROM track_points WHERE video_id=?", video_id):
             by_frame[p["frame"]].append(p)
         ev = count_video(video_id, lines)["events"] if lines else []
+        # Speed per track, if the station has a trap. Drawn on the box so the number can
+        # be checked against the footage rather than taken on trust -- which is the whole
+        # point of an annotated video.
+        kmh, trap = {}, None
+        try:
+            import speed as speed_mod
+            sid = db.one("SELECT site_id FROM videos WHERE id=?", video_id)
+            if sid and sid["site_id"]:
+                trap = speed_mod.trap_for(sid["site_id"])
+                if trap:
+                    kmh = {r["track_id"]: r["kmh"]
+                           for r in speed_mod.speeds_for(video_id, trap)}
+        except Exception:
+            trap = None
         ev_by_frame = defaultdict(list)
         for e in ev:
             ev_by_frame[e["frame"]].append(e)
@@ -265,6 +279,21 @@ def render(video_id, job_id):
                 break
             if scale < 1.0:
                 frame = cv2.resize(frame, (ow, oh))
+            # The trap, in a different colour from the count line: they mean different
+            # things and a viewer must not read a speed line as a counting line.
+            if trap:
+                for key, nm in (("a", "A"), ("b", "B")):
+                    q = trap[key]
+                    a_ = (int(q["start"][0] * scale), int(q["start"][1] * scale))
+                    b_ = (int(q["end"][0] * scale), int(q["end"][1] * scale))
+                    cv2.line(frame, a_, b_, (0, 0, 0), max(2, int(5 * k)), cv2.LINE_AA)
+                    cv2.line(frame, a_, b_, (60, 220, 255), max(1, int(2 * k)), cv2.LINE_AA)
+                    cv2.putText(frame, f"{nm}", (a_[0] + 4, a_[1] + int(16 * k)),
+                                FONT, 0.5 * k, (60, 220, 255), max(1, int(k)), cv2.LINE_AA)
+                mid = (int((trap["a"]["start"][0] + trap["b"]["start"][0]) / 2 * scale),
+                       int((trap["a"]["start"][1] + trap["b"]["start"][1]) / 2 * scale))
+                cv2.putText(frame, f"{trap['metres']:.0f} m", mid, FONT, 0.5 * k,
+                            (60, 220, 255), max(1, int(k)), cv2.LINE_AA)
             for ln in lines:
                 p1 = (int(ln["start"][0] * scale), int(ln["start"][1] * scale))
                 p2 = (int(ln["end"][0] * scale), int(ln["end"][1] * scale))
@@ -284,7 +313,9 @@ def render(video_id, job_id):
                 x1, y1 = int(p["x1"] * scale), int(p["y1"] * scale)
                 x2, y2 = int(p["x2"] * scale), int(p["y2"] * scale)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), col, max(1, int(2 * k)))
-                _tag(frame, f"{p['track_id']}  {CLASSES[cls]}", x1, y1, y2, col, k, pr)
+                v_ = kmh.get(p["track_id"])
+                _tag(frame, f"{p['track_id']}  {CLASSES[cls]}"
+                     + (f"  {v_:.0f} km/h" if v_ else ""), x1, y1, y2, col, k, pr)
             for e in ev_by_frame.get(i, []):
                 running[e["direction"]] += 1
                 running[(e["class"], e["direction"])] += 1

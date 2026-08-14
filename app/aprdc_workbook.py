@@ -184,6 +184,20 @@ def build(video_ids, meta=None):
     if not windows:
         return {"error": "no footage with a usable clock"}
 
+    # Speed, if the station has a trap set up. Optional on purpose: most surveys are
+    # classified counts and never measure it, and an empty sheet is worse than no sheet.
+    speed_rows = []
+    try:
+        import speed as speed_mod
+        sid = db.one("""SELECT site_id FROM videos WHERE id=? AND site_id IS NOT NULL""",
+                     video_ids[0]) if video_ids else None
+        trap = speed_mod.trap_for(sid["site_id"]) if sid else None
+        if trap:
+            for vid in video_ids:
+                speed_rows.extend(speed_mod.speeds_for(vid, trap))
+    except Exception:
+        trap = None
+
     first, last = windows[0][0], windows[-1][1]
     h0 = first.replace(minute=0, second=0, microsecond=0)
     h1 = (last + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
@@ -194,6 +208,11 @@ def build(video_ids, meta=None):
     for e in events:
         q = e["t"].replace(minute=(e["t"].minute // 15) * 15, second=0, microsecond=0)
         binned[(q, e["direction"])][_class_of(e, attrs)] += 1
+
+    speed_summary = None
+    if speed_rows:
+        import speed as speed_mod
+        speed_summary = {**speed_mod.summary(speed_rows), "trap": trap}
 
     hours, grand = [], Counter()
     per_direction = {d: Counter() for d in directions}
@@ -244,6 +263,7 @@ def build(video_ids, meta=None):
                    "to": last.strftime("%Y-%m-%d %H:%M:%S"),
                    "minutes": round((last - first).total_seconds() / 60, 1)},
         "unreviewed_columns": unreviewed, "meta": meta,
+        "speed": speed_summary,
     }
 
 
@@ -401,6 +421,78 @@ def write(data, out_path, meta=None):
     ws.column_dimensions[chr(65 + c0 + 2)].width = 62
 
     # ── coverage & provenance ──
+    # ── Speed ──
+    # Its own sheet, and only when a trap was set up. Speed is not part of a classified
+    # count and most surveys will not have it; a sheet of blanks reads as a measurement
+    # that failed rather than one nobody asked for.
+    sp = data.get("speed")
+    if sp and sp.get("n"):
+        ws = wb.create_sheet("Speed")
+        r = 1
+        c = ws.cell(r, 1, "Spot Speed Summary"); c.font = Font(bold=True, size=13); r += 2
+        t = sp.get("trap") or {}
+        for k, v in (("Method", "Time between two lines a measured distance apart"),
+                     ("Measured distance", f"{t.get('metres','?')} m"),
+                     ("Vehicles measured", sp["n"])):
+            ws.cell(r, 1, k).font = Font(bold=True, size=9)
+            ws.cell(r, 2, v).font = Font(size=9); r += 1
+        r += 1
+
+        # The 85th percentile leads. Design speed and enforcement thresholds are set from
+        # it, and a report that prints only a mean invites somebody to use the wrong number.
+        ws.cell(r, 1, "Speed (km/h)").font = Font(bold=True); r += 1
+        for k, v in (("85th percentile", sp.get("p85")), ("Median", sp.get("median")),
+                     ("Mean", sp.get("mean")), ("15th percentile", sp.get("p15")),
+                     ("Slowest", sp.get("min")), ("Fastest", sp.get("max"))):
+            ws.cell(r, 1, k).font = Font(bold=True if k == "85th percentile" else False, size=9)
+            cell = ws.cell(r, 2, v)
+            cell.font = Font(bold=True if k == "85th percentile" else False, size=9)
+            r += 1
+        r += 1
+
+        ws.cell(r, 1, "By vehicle class").font = Font(bold=True); r += 1
+        for h_, col in (("Class", 1), ("Vehicles", 2), ("Median km/h", 3)):
+            cc = ws.cell(r, col, h_); cc.font = Font(bold=True, size=9)
+            cc.fill = hdr; cc.border = box; cc.alignment = ctr
+        r += 1
+        for name, d_ in (sp.get("by_class") or {}).items():
+            ws.cell(r, 1, name).font = Font(size=9)
+            ws.cell(r, 2, d_["n"]).font = Font(size=9)
+            ws.cell(r, 3, d_["median"]).font = Font(size=9)
+            r += 1
+        r += 1
+
+        ws.cell(r, 1, "By direction").font = Font(bold=True); r += 1
+        for name, d_ in (sp.get("by_direction") or {}).items():
+            ws.cell(r, 1, DIRN.get(name, {}).get("label", name)).font = Font(size=9)
+            ws.cell(r, 2, d_["n"]).font = Font(size=9)
+            ws.cell(r, 3, d_["median"]).font = Font(size=9)
+            r += 1
+        r += 1
+
+        # Warnings go IN the deliverable, not just on a screen the client never sees. A
+        # speed figure travels further than the caveat that came with it.
+        for w in (sp.get("warnings") or []):
+            cell = ws.cell(r, 1, "CHECK: " + w)
+            cell.font = Font(size=9, bold=True, color="9C0006"); r += 1
+        if sp.get("warnings"):
+            r += 1
+        ws.cell(r, 1, "Method").font = Font(bold=True); r += 1
+        for line in [
+            "Each vehicle is timed between two lines drawn across the carriageway, a "
+            "distance measured on the ground.",
+            "Crossing times are interpolated between frames, so the reading does not "
+            "depend on a vehicle happening to be observed exactly on the line.",
+            "The measured distance is the dominant source of error: over 30 m, half a "
+            "metre is 1.7%. Frame timing is about 1%.",
+            "Readings below 3 or above 150 km/h are discarded as tracking failures, not "
+            "reported.",
+        ]:
+            ws.cell(r, 1, "• " + line).font = Font(size=9); r += 1
+        ws.column_dimensions["A"].width = 34
+        ws.column_dimensions["B"].width = 16
+        ws.column_dimensions["C"].width = 16
+
     ws = wb.create_sheet("Coverage")
     ws.cell(1, 1, "Coverage, provenance and what is not yet reviewed").font = Font(bold=True, size=12)
     ws.cell(3, 1, "Source clips").font = Font(bold=True)
