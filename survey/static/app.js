@@ -322,7 +322,8 @@ async function paintSpeed(id) {
     <div style="display:flex;align-items:center;gap:14px">
       <div style="flex:1"><b>Speed${t ? '' : ' (optional)'}</b>
         <div class="muted-sm">${t
-          ? `Two lines ${t.metres} m apart. ${s.n
+          ? `Two lines ${t.metres} m apart${t.expected_kmh
+              ? `, expecting about ${t.expected_kmh} km/h` : ''}. ${s.n
               ? `${num(s.n)} vehicles measured.` : 'No vehicle has crossed both yet.'}`
           : 'Draw two lines across the road and say how far apart they are on the ground. '
             + 'Speed is then the time between them — no camera calibration, and the only '
@@ -365,17 +366,29 @@ function openTrap(id, trap) {
       the road and type it below. That measurement is the whole calibration: everything
       else is timing, which the video already knows.</p>
     <div id="trapHost" style="position:relative"></div>
-    <label class="lbl" style="margin-top:12px">Distance between the two lines (metres)</label>
-    <input class="field sm" id="trapM" type="number" min="2" max="500" step="0.1"
-           style="max-width:200px;margin-top:6px" value="${trap ? trap.metres : ''}"
-           placeholder="e.g. 30">`,
+    <div class="grid g2" style="margin-top:12px">
+      <div><label class="lbl">Distance between the two lines (metres)</label>
+        <input class="field sm" id="trapM" type="number" min="2" max="500" step="0.1"
+               style="margin-top:6px" value="${trap ? trap.metres : ''}" placeholder="e.g. 25">
+        <p class="muted-sm" style="margin:6px 0 0">Measured on the road, not estimated from
+          the picture. At 25 m, half a metre of error is 2%; at 9 m it is 5.6%.</p></div>
+      <div><label class="lbl">Speed you expect here (km/h, optional)</label>
+        <input class="field sm" id="trapE" type="number" min="10" max="150" step="1"
+               style="margin-top:6px" value="${trap && trap.expected_kmh ? trap.expected_kmh : ''}"
+               placeholder="e.g. 60">
+        <p class="muted-sm" style="margin:6px 0 0">Roughly what traffic actually does, from
+          standing there. If the measurement disagrees the app works out what the distance
+          would have to be — which is how a wrong one gets caught.</p></div>
+    </div>`,
     [{ label: 'Save', primary: true, act: async () => {
         const ls = ED ? ED.lines() : [];   // the editor exposes lines(), not current()
         const m = parseFloat($('#trapM').value);
         if (ls.length !== 2) return toast('Draw exactly two lines across the road', true);
         if (!m || m < 2) return toast('Enter the distance between the lines in metres', true);
+        const ex = parseFloat($('#trapE').value);
         try {
-          await api(`/api/stations/${id}/speed`, { a: ls[0], b: ls[1], metres: m });
+          await api(`/api/stations/${id}/speed`,
+            { a: ls[0], b: ls[1], metres: m, expected_kmh: ex || null });
           closeModal(); toast('Speed measurement set up'); viewStation(id);
         } catch (e) { toast(e.message, true); }
       } }], 'wide');

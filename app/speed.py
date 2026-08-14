@@ -51,14 +51,27 @@ def trap_for(site_id):
     return t
 
 
-def save_trap(site_id, a, b, metres):
+def save_trap(site_id, a, b, metres, expected_kmh=None):
+    """`expected_kmh` is what the surveyor believes traffic actually does here.
+
+    It exists because the generic sanity check was useless in practice. "Flag anything
+    above 110 km/h" passes a rural road reading 90 when the person who has stood there
+    knows it never exceeds 60 -- and the cause, a mismeasured distance, is exactly what a
+    check is for. Nobody can set that threshold from the footage; the surveyor can set it
+    from memory in five seconds.
+    """
     if not (a and b and metres):
         raise ValueError("a speed trap needs two lines and the distance between them")
     metres = float(metres)
     if not 2.0 <= metres <= 500.0:
         raise ValueError("the distance between the lines should be between 2 and 500 m")
-    db.run("UPDATE sites SET speed_trap=? WHERE id=?",
-           db.jdump({"a": a, "b": b, "metres": metres}), site_id)
+    trap = {"a": a, "b": b, "metres": metres}
+    if expected_kmh:
+        expected_kmh = float(expected_kmh)
+        if not 10.0 <= expected_kmh <= 150.0:
+            raise ValueError("the expected speed should be between 10 and 150 km/h")
+        trap["expected_kmh"] = expected_kmh
+    db.run("UPDATE sites SET speed_trap=? WHERE id=?", db.jdump(trap), site_id)
     return trap_for(site_id)
 
 
@@ -152,7 +165,7 @@ def speeds_for(video_id, trap):
     return out
 
 
-def summary(rows):
+def summary(rows, trap=None):
     """The numbers a speed study actually reports.
 
     The 85th percentile is the one that matters and the one people forget: design speed
@@ -200,7 +213,32 @@ def summary(rows):
                 f"the carriageway rather than parallel to the other on screen.")
     if len(vals) >= 20:
         p85 = pct(85)
-        if p85 and p85 > 110:
+        expected = (trap or {}).get("expected_kmh")
+        metres = (trap or {}).get("metres")
+        if expected and p85:
+            # Speed is exactly proportional to the trap distance, so a reading that is
+            # 2x too fast means a distance 2x too long. Rather than say "this looks
+            # wrong", say what the distance would have to be -- that is a checkable claim
+            # the surveyor can take back to the road, and it is how the 18m guess on this
+            # station was caught: expecting 60 implied 8.6m, and the road turned out to
+            # have 9m dash spacing.
+            if p85 > expected * 1.15:
+                msg = (f"the 85th percentile is {p85:.0f} km/h but you expect about "
+                       f"{expected:.0f} here.")
+                if metres:
+                    msg += (f" That points at the distance: {metres * expected / p85:.1f} m "
+                            f"would give {expected:.0f}, against the {metres:.1f} m entered.")
+                warnings.append(msg + " Re-check the measurement before quoting these.")
+            elif p85 < expected * 0.6:
+                msg = (f"the 85th percentile is {p85:.0f} km/h against the "
+                       f"{expected:.0f} you expect.")
+                if metres:
+                    msg += (f" {metres * expected / p85:.1f} m would give {expected:.0f}.")
+                warnings.append(msg + " Either the distance is short or the trap is "
+                                "catching vehicles slowing for something.")
+        elif p85 and p85 > 110:
+            # No expectation set, so all that can be said is that this is fast for any
+            # road a survey like this is run on.
             warnings.append(
                 f"an 85th percentile of {p85:.0f} km/h is higher than this kind of road "
                 f"carries. The measured distance is the most likely cause — check it "

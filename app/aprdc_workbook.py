@@ -212,7 +212,7 @@ def build(video_ids, meta=None):
     speed_summary = None
     if speed_rows:
         import speed as speed_mod
-        speed_summary = {**speed_mod.summary(speed_rows), "trap": trap}
+        speed_summary = {**speed_mod.summary(speed_rows, trap), "trap": trap}
 
     hours, grand = [], Counter()
     per_direction = {d: Counter() for d in directions}
@@ -433,6 +433,9 @@ def write(data, out_path, meta=None):
         t = sp.get("trap") or {}
         for k, v in (("Method", "Time between two lines a measured distance apart"),
                      ("Measured distance", f"{t.get('metres','?')} m"),
+                     ("Expected speed at this location",
+                      f"{t['expected_kmh']:.0f} km/h (surveyor)" if t.get("expected_kmh")
+                      else "not stated"),
                      ("Vehicles measured", sp["n"])):
             ws.cell(r, 1, k).font = Font(bold=True, size=9)
             ws.cell(r, 2, v).font = Font(size=9); r += 1

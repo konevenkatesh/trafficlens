@@ -480,6 +480,7 @@ class TrapIn(BaseModel):
     a: dict | None = None
     b: dict | None = None
     metres: float | None = None
+    expected_kmh: float | None = None
 
 
 @app.get("/api/stations/{site_id}/speed")
@@ -494,7 +495,7 @@ def speed_get(site_id: int):
                         AND COALESCE(excluded,0)=0""", site_id):
         rows.extend(speed.speeds_for(v["id"], trap))
         fps = fps or v["fps"]
-    return {"trap": trap, "summary": speed.summary(rows),
+    return {"trap": trap, "summary": speed.summary(rows, trap),
             "accuracy": speed.accuracy_note(trap, fps or 12)}
 
 
@@ -502,7 +503,7 @@ def speed_get(site_id: int):
 def speed_set(site_id: int, body: TrapIn):
     import speed
     try:
-        speed.save_trap(site_id, body.a, body.b, body.metres)
+        speed.save_trap(site_id, body.a, body.b, body.metres, body.expected_kmh)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return speed_get(site_id)
