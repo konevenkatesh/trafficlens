@@ -211,11 +211,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest \
-            --title "Latest build" --notes "Build ${{ github.run_number }} from ${{ github.sha }}" \
-            --target "${{ github.sha }}" \
-            TrafficLens-Setup.exe TrafficLens-portable.zip
+          # Upload into the existing release rather than deleting and recreating it.
+          #
+          # The delete-then-create version failed with "HTTP 403: Resource not accessible
+          # by integration" the first time two pushes landed five minutes apart: both runs
+          # reached this step together, and one deleted the tag the other was writing to.
+          # It had published cleanly all day until the runs overlapped, which is exactly
+          # the failure that looks like a permissions problem and is not one.
+          #
+          # create-if-missing then upload --clobber is idempotent, needs no tag deletion,
+          # and two concurrent runs can both finish -- the later one simply wins.
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest --title "Latest build" \
+              --notes "Build ${{ github.run_number }} from ${{ github.sha }}" \
+              --target "${{ github.sha }}" || true
+          fi
+          for n in 1 2 3; do
+            if gh release upload latest \
+                 TrafficLens-Setup.exe TrafficLens-portable.zip --clobber; then
+              break
+            fi
+            echo "upload attempt $n failed; retrying"
+            sleep $((10 * n))
+            [ "$n" = 3 ] && exit 1
+          done
+          gh release edit latest --target "${{ github.sha }}" \
+            --notes "Build ${{ github.run_number }} from ${{ github.sha }}" || true
+          gh release view latest --json name,publishedAt,assets \
+            --jq '.assets[] | "published \(.name)  \(.size) bytes"'
 
 
 
