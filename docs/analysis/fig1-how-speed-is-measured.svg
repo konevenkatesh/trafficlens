@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 620" width="1100" height="620" font-family="Inter, Helvetica Neue, Arial, sans-serif">
+  <rect width="1100" height="620" fill="#ffffff"/>
+
+  <text x="40" y="46" font-size="24" font-weight="700" fill="#14142b">How the speed is measured</text>
+  <text x="40" y="72" font-size="14.5" fill="#5a5a72">A fixed-distance speed meter: two lines a measured distance apart, and the time a vehicle takes between them. No camera model, no calibration to drift.</text>
+
+  <!-- ── camera view panel ── -->
+  <rect x="40" y="96" width="600" height="330" rx="10" fill="#f4f6fa" stroke="#d8dee9"/>
+  <text x="60" y="122" font-size="12.5" font-weight="600" fill="#5a5a72" letter-spacing="0.06em">WHAT THE CAMERA SEES</text>
+
+  <!-- road in perspective -->
+  <path d="M 250 160 L 330 160 L 600 400 L 90 400 Z" fill="#c9cfd8"/>
+  <path d="M 290 160 L 345 400" stroke="#ffffff" stroke-width="3" stroke-dasharray="16 22"/>
+
+  <!-- gate A (far) -->
+  <line x1="258" y1="196" x2="372" y2="196" stroke="#2d6cdf" stroke-width="4"/>
+  <circle cx="258" cy="196" r="5" fill="#2d6cdf"/><circle cx="372" cy="196" r="5" fill="#2d6cdf"/>
+  <text x="384" y="201" font-size="15" font-weight="700" fill="#2d6cdf">A</text>
+
+  <!-- gate B (near) -->
+  <line x1="150" y1="352" x2="540" y2="352" stroke="#2d6cdf" stroke-width="4"/>
+  <circle cx="150" cy="352" r="5" fill="#2d6cdf"/><circle cx="540" cy="352" r="5" fill="#2d6cdf"/>
+  <text x="552" y="357" font-size="15" font-weight="700" fill="#2d6cdf">B</text>
+
+  <!-- distance annotation -->
+  <line x1="420" y1="196" x2="470" y2="352" stroke="#c0392b" stroke-width="2" stroke-dasharray="5 4"/>
+  <rect x="432" y="258" width="86" height="26" rx="5" fill="#c0392b"/>
+  <text x="475" y="276" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle">D = 20 m</text>
+  <text x="432" y="302" font-size="11.5" fill="#c0392b">measured on the road</text>
+
+  <!-- vehicle at two moments -->
+  <rect x="292" y="182" width="34" height="20" rx="4" fill="#14142b"/>
+  <text x="309" y="176" font-size="11" fill="#14142b" text-anchor="middle">t₁</text>
+  <rect x="300" y="332" width="60" height="34" rx="5" fill="#14142b"/>
+  <text x="330" y="326" font-size="11" fill="#14142b" text-anchor="middle">t₂</text>
+  <path d="M 316 210 L 328 322" stroke="#14142b" stroke-width="1.5" stroke-dasharray="3 3"/>
+
+  <text x="60" y="418" font-size="11.5" fill="#7a7a90">Each line is drawn square ACROSS the carriageway — aligned with something real, not parallel to the other on screen.</text>
+
+  <!-- ── the calculation ── -->
+  <rect x="664" y="96" width="396" height="330" rx="10" fill="#ffffff" stroke="#d8dee9"/>
+  <text x="684" y="122" font-size="12.5" font-weight="600" fill="#5a5a72" letter-spacing="0.06em">THE CALCULATION</text>
+
+  <rect x="684" y="140" width="356" height="60" rx="7" fill="#f4f6fa"/>
+  <text x="862" y="178" font-size="24" font-weight="600" fill="#14142b" text-anchor="middle">speed = D ÷ (t₂ − t₁)</text>
+
+  <text x="684" y="232" font-size="13.5" font-weight="700" fill="#14142b">Only two things can be wrong</text>
+
+  <circle cx="694" cy="258" r="4" fill="#2d6cdf"/>
+  <text x="710" y="263" font-size="13" fill="#3a3a52">D — the distance you measure once, on the ground</text>
+  <text x="710" y="282" font-size="11.5" fill="#7a7a90">a 10 cm error over 20 m is 0.5%</text>
+
+  <circle cx="694" cy="312" r="4" fill="#2d6cdf"/>
+  <text x="710" y="317" font-size="13" fill="#3a3a52">t — when the vehicle crossed each line</text>
+  <text x="710" y="336" font-size="11.5" fill="#7a7a90">interpolated between frames, not rounded to one</text>
+
+  <rect x="684" y="356" width="356" height="52" rx="7" fill="#fff4f4" stroke="#f0c8c8"/>
+  <text x="700" y="378" font-size="12.5" font-weight="600" fill="#c0392b">Timing dominates, not your tape measure</text>
+  <text x="700" y="396" font-size="11.5" fill="#8a4a4a">At 20 m / 15 fps: timing ±7.4%, distance ±0.5%</text>
+
+  <!-- ── why not the obvious alternative ── -->
+  <rect x="40" y="446" width="1020" height="140" rx="10" fill="#f9f7f2" stroke="#e6dfd0"/>
+  <text x="60" y="474" font-size="13.5" font-weight="700" fill="#14142b">Why not just convert pixels to metres and differentiate the track?</text>
+  <text x="60" y="500" font-size="12.5" fill="#5a5a72">Tried it on this footage. It failed twice, and both times the output looked perfectly reasonable:</text>
+  <text x="60" y="527" font-size="12.5" fill="#5a5a72">• The lane dashes used to calibrate it were <tspan font-weight="600" fill="#c0392b">not consecutive</tspan> — a cross-ratio test put their spacing at 1, 2, 2. Assuming otherwise makes every speed ~40% low.</text>
+  <text x="60" y="551" font-size="12.5" fill="#5a5a72">• Even calibrated, a single road axis maps the far lane short: <tspan font-weight="600" fill="#c0392b">motorcycles read 70 km/h and cars 36</tspan> on the same road.</text>
+  <text x="60" y="575" font-size="12.5" fill="#3a3a52">The trap has neither failure mode. On the same clips it gives cars 98, motorcycles 86, autos 77, 3-axle trucks 75 — the order a road actually produces.</text>
+</svg>

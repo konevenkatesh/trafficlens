@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 700" width="1100" height="700" font-family="Inter, Helvetica Neue, Arial, sans-serif">
+  <rect width="1100" height="700" fill="#ffffff"/>
+
+  <text x="40" y="46" font-size="24" font-weight="700" fill="#14142b">Highest-accuracy setup</text>
+  <text x="40" y="72" font-size="14.5" fill="#5a5a72">What to do at the site, so the data is worth measuring. Projected ±0.3–0.6 km/h per vehicle — inside the legal enforcement bar and level with published research.</text>
+
+  <!-- ── site layout ── -->
+  <rect x="40" y="96" width="640" height="392" rx="10" fill="#f4f6fa" stroke="#d8dee9"/>
+  <text x="60" y="122" font-size="12.5" font-weight="600" fill="#5a5a72" letter-spacing="0.06em">AT THE SITE</text>
+
+  <!-- pole + camera -->
+  <rect x="88" y="176" width="7" height="240" fill="#8a8a9e"/>
+  <path d="M 95 182 l 34 12 l -34 14 z" fill="#14142b"/>
+  <text x="70" y="440" font-size="11.5" font-weight="600" fill="#3a3a52">6–8 m</text>
+  <text x="70" y="454" font-size="11" fill="#7a7a90">high</text>
+  <path d="M 129 194 L 620 250" stroke="#2d6cdf" stroke-width="1" stroke-dasharray="4 4" opacity="0.6"/>
+  <path d="M 129 206 L 620 430" stroke="#2d6cdf" stroke-width="1" stroke-dasharray="4 4" opacity="0.6"/>
+
+  <!-- road -->
+  <path d="M 200 246 L 620 246 L 620 434 L 200 434 Z" fill="#c9cfd8"/>
+  <line x1="200" y1="340" x2="620" y2="340" stroke="#ffffff" stroke-width="3" stroke-dasharray="20 24"/>
+
+  <!-- 5 gates -->
+  <g stroke="#2d6cdf" stroke-width="3">
+    <line x1="248" y1="246" x2="248" y2="434"/>
+    <line x1="340" y1="246" x2="340" y2="434"/>
+    <line x1="432" y1="246" x2="432" y2="434"/>
+    <line x1="524" y1="246" x2="524" y2="434"/>
+    <line x1="612" y1="246" x2="612" y2="434"/>
+  </g>
+  <g font-size="12" font-weight="700" fill="#2d6cdf" text-anchor="middle">
+    <text x="248" y="238">1</text><text x="340" y="238">2</text><text x="432" y="238">3</text>
+    <text x="524" y="238">4</text><text x="612" y="238">5</text>
+  </g>
+
+  <!-- span -->
+  <line x1="248" y1="458" x2="612" y2="458" stroke="#c0392b" stroke-width="1.5"/>
+  <line x1="248" y1="452" x2="248" y2="464" stroke="#c0392b" stroke-width="1.5"/>
+  <line x1="612" y1="452" x2="612" y2="464" stroke="#c0392b" stroke-width="1.5"/>
+  <text x="430" y="476" font-size="12.5" font-weight="700" fill="#c0392b" text-anchor="middle">40 m, surveyed with a wheel or GNSS</text>
+
+  <!-- calibration rectangle -->
+  <rect x="340" y="286" width="184" height="108" fill="none" stroke="#4a9c5a" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="432" y="282" font-size="11" fill="#4a9c5a" text-anchor="middle">4 surveyed corners</text>
+
+  <!-- ── the recipe ── -->
+  <rect x="704" y="96" width="356" height="392" rx="10" fill="#ffffff" stroke="#d8dee9"/>
+  <text x="724" y="122" font-size="12.5" font-weight="600" fill="#5a5a72" letter-spacing="0.06em">THE RECIPE</text>
+
+  <g font-size="12.5">
+    <circle cx="734" cy="150" r="11" fill="#2d6cdf"/><text x="734" y="155" font-size="11.5" font-weight="700" fill="#fff" text-anchor="middle">1</text>
+    <text x="756" y="149" font-weight="700" fill="#14142b">Mount high, look along the road</text>
+    <text x="756" y="167" fill="#5a5a72">6–8 m gets you 40 m of usable carriageway.</text>
+    <text x="756" y="183" fill="#5a5a72">Your current view only reaches 27 m.</text>
+
+    <circle cx="734" cy="212" r="11" fill="#2d6cdf"/><text x="734" y="217" font-size="11.5" font-weight="700" fill="#fff" text-anchor="middle">2</text>
+    <text x="756" y="211" font-weight="700" fill="#14142b">Record at 30 fps</text>
+    <text x="756" y="229" fill="#5a5a72">Halves the timing error. Costs nothing but</text>
+    <text x="756" y="245" fill="#5a5a72">disk — biggest single win available.</text>
+
+    <circle cx="734" cy="274" r="11" fill="#2d6cdf"/><text x="734" y="279" font-size="11.5" font-weight="700" fill="#fff" text-anchor="middle">3</text>
+    <text x="756" y="273" font-weight="700" fill="#14142b">Five gates, not two</text>
+    <text x="756" y="291" fill="#5a5a72">Four independent readings per vehicle;</text>
+    <text x="756" y="307" fill="#5a5a72">average them and reject the outlier.</text>
+    <text x="756" y="323" fill="#7a7a90">OIML requires ≥3 detection points.</text>
+
+    <circle cx="734" cy="352" r="11" fill="#2d6cdf"/><text x="734" y="357" font-size="11.5" font-weight="700" fill="#fff" text-anchor="middle">4</text>
+    <text x="756" y="351" font-weight="700" fill="#14142b">Paint or mark the gate positions</text>
+    <text x="756" y="369" fill="#5a5a72">Something visible in the video AND</text>
+    <text x="756" y="385" fill="#5a5a72">measurable on the ground. Not lane dashes —</text>
+    <text x="756" y="401" fill="#5a5a72">their spacing is what got this wrong once.</text>
+
+    <circle cx="734" cy="430" r="11" fill="#4a9c5a"/><text x="734" y="435" font-size="11.5" font-weight="700" fill="#fff" text-anchor="middle">5</text>
+    <text x="756" y="429" font-weight="700" fill="#14142b">Prove it once with GPS</text>
+    <text x="756" y="447" fill="#5a5a72">Drive through 20 times at known speeds.</text>
+    <text x="756" y="463" fill="#5a5a72">Without this you have precision, not accuracy.</text>
+  </g>
+
+  <!-- outcome strip -->
+  <rect x="40" y="508" width="1020" height="72" rx="9" fill="#f2f8f3" stroke="#cfe6d4"/>
+  <text x="60" y="534" font-size="13.5" font-weight="700" fill="#14142b">Where that lands</text>
+  <text x="60" y="558" font-size="12.5" fill="#3a3a52">±0.37 km/h per vehicle at 50 km/h — inside the OIML ±3 km/h enforcement bar, and better than the 1.2–2.8 km/h reported on the BrnoCompSpeed benchmark. Aggregate medians become limited by the tape measure alone.</text>
+
+  <!-- honesty strip -->
+  <rect x="40" y="596" width="1020" height="80" rx="9" fill="#f9f7f2" stroke="#e6dfd0"/>
+  <text x="60" y="622" font-size="13.5" font-weight="700" fill="#14142b">What this still will not give you</text>
+  <text x="60" y="645" font-size="12.5" fill="#5a5a72">Legal enforcement — that needs type approval, not just accuracy. And it measures only vehicles tracked across every gate: at this site motorcycles are 50% of traffic but 12% of readings, so an overall</text>
+  <text x="60" y="665" font-size="12.5" fill="#5a5a72">average would be a car speed with a mixed-traffic label. Report speed <tspan font-weight="600">per class</tspan>, or weight by the true class mix.</text>
+</svg>

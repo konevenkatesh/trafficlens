@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 660" width="1100" height="660" font-family="Inter, Helvetica Neue, Arial, sans-serif">
+  <rect width="1100" height="660" fill="#ffffff"/>
+
+  <text x="40" y="46" font-size="24" font-weight="700" fill="#14142b">What each improvement is worth</text>
+  <text x="40" y="72" font-size="14.5" fill="#5a5a72">Per-vehicle error at 50 km/h. Every figure is computed from jitter measured on real footage (9.35 px against 8.3 px/frame of motion), not estimated.</text>
+
+  <!-- axis -->
+  <line x1="330" y1="112" x2="330" y2="512" stroke="#d8dee9"/>
+  <text x="330" y="536" font-size="11.5" fill="#9a9ab0" text-anchor="middle">0</text>
+  <text x="700" y="536" font-size="11.5" fill="#9a9ab0" text-anchor="middle">4</text>
+  <text x="1040" y="536" font-size="11.5" fill="#9a9ab0" text-anchor="middle">8 km/h</text>
+  <text x="685" y="558" font-size="12" fill="#7a7a90" text-anchor="middle">per-vehicle error at 50 km/h</text>
+
+  <!-- OIML legal bar at 3 km/h -->
+  <line x1="596" y1="106" x2="596" y2="518" stroke="#c0392b" stroke-width="2" stroke-dasharray="6 4"/>
+  <rect x="600" y="106" width="232" height="34" rx="5" fill="#c0392b"/>
+  <text x="612" y="122" font-size="11.5" font-weight="700" fill="#ffffff">OIML R 91-1:2025 legal bar</text>
+  <text x="612" y="135" font-size="11" fill="#ffcccc">±3 km/h — enforcement grade</text>
+
+  <!-- BrnoCompSpeed band -->
+  <rect x="381" y="106" width="88" height="412" fill="#2d6cdf" opacity="0.07"/>
+  <text x="425" y="504" font-size="10.5" fill="#2d6cdf" text-anchor="middle">published</text>
+  <text x="425" y="516" font-size="10.5" fill="#2d6cdf" text-anchor="middle">1.2–2.8</text>
+
+  <!-- bars: x scale 88.75 px per km/h -->
+  <g font-size="13">
+    <text x="316" y="172" text-anchor="end" fill="#3a3a52">today — 9 m, 15 fps, 2 lines</text>
+    <rect x="330" y="156" width="728" height="24" rx="3" fill="#c0392b"/>
+    <text x="1046" y="173" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="end">8.2</text>
+
+    <text x="316" y="216" text-anchor="end" fill="#3a3a52">20 m trap — all this camera sees</text>
+    <rect x="330" y="200" width="328" height="24" rx="3" fill="#e08a3c"/>
+    <text x="646" y="217" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="end">3.7</text>
+
+    <text x="316" y="260" text-anchor="end" fill="#3a3a52">+ 6-point crossing fit</text>
+    <rect x="330" y="244" width="190" height="24" rx="3" fill="#4a9c5a"/>
+    <text x="508" y="261" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="end">2.14</text>
+
+    <text x="316" y="304" text-anchor="end" fill="#3a3a52">+ record at 30 fps</text>
+    <rect x="330" y="288" width="97" height="24" rx="3" fill="#4a9c5a"/>
+    <text x="437" y="305" font-size="12.5" font-weight="700" fill="#4a9c5a" text-anchor="start">1.09</text>
+
+    <text x="316" y="348" text-anchor="end" fill="#3a3a52">+ 5 gates instead of 2</text>
+    <rect x="330" y="332" width="52" height="24" rx="3" fill="#2d6cdf"/>
+    <text x="392" y="349" font-size="12.5" font-weight="700" fill="#2d6cdf" text-anchor="start">0.59</text>
+
+    <text x="316" y="392" text-anchor="end" fill="#3a3a52">+ camera sited for 40 m of road</text>
+    <rect x="330" y="376" width="33" height="24" rx="3" fill="#2d6cdf"/>
+    <text x="373" y="393" font-size="12.5" font-weight="700" fill="#2d6cdf" text-anchor="start">0.37</text>
+
+    <text x="316" y="436" text-anchor="end" fill="#3a3a52">+ steadier ground point</text>
+    <rect x="330" y="420" width="24" height="24" rx="3" fill="#2d6cdf"/>
+    <text x="364" y="437" font-size="12.5" font-weight="700" fill="#2d6cdf" text-anchor="start">0.27</text>
+  </g>
+
+  <text x="316" y="470" font-size="11.5" fill="#9a9ab0" text-anchor="end">↑ each row adds to the one above</text>
+
+  <!-- the caveat panel -->
+  <rect x="40" y="576" width="1020" height="66" rx="9" fill="#f9f7f2" stroke="#e6dfd0"/>
+  <text x="60" y="600" font-size="13" font-weight="700" fill="#14142b">Read this before quoting the small numbers</text>
+  <text x="60" y="623" font-size="12.5" fill="#5a5a72">These are <tspan font-weight="600">per-vehicle</tspan> errors. Survey figures are aggregates, and random error averages out of a median (±0.6% over 135 vehicles) while <tspan font-weight="600">inflating the 85th percentile</tspan> — the number surveys actually quote. At ±13% per vehicle, p85 reads ~1.9 km/h high.</text>
+</svg>
