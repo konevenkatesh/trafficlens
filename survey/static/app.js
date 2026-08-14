@@ -91,7 +91,8 @@ async function viewStations() {
     }).join('') : `<div class="card"><div class="card-body" style="text-align:center;
         padding:40px;color:var(--cc-fg-3)">No stations yet. Create one above to start.</div></div>`}
 
-    <p class="muted-sm" style="margin-top:20px">Running on ${esc(dev.name)}.</p>
+    <p class="muted-sm" style="margin-top:20px">Running on ${esc(dev.name)} ·
+      <a href="#settings">Settings</a></p>
   </div>`;
 
   const go = async () => {
@@ -475,6 +476,131 @@ const CLASS_KEY = {
   Other: 'O',
 };
 
+/* ─────────────────────────── settings: the cloud GPU ─────────────────────────── */
+/* The screen where somebody hands the app a way to spend their money, so it is built
+   around telling them what it is costing rather than around the connection working. */
+async function viewSettings() {
+  const c = await api('/api/cloud', undefined, 'GET');
+  const sp = c.spend || {};
+  const live = c.running || [];
+  const pct = sp.limit_usd ? Math.min(100, 100 * sp.month_usd / sp.limit_usd) : 0;
+
+  app.innerHTML = `<div class="wrap">
+    <div class="page-head" style="margin-bottom:18px">
+      <div><h1>Settings</h1><p>Detect on a rented GPU instead of this computer</p></div>
+      <a class="btn ghost" href="#stations">Back</a></div>
+
+    ${live.length ? `<div class="card" style="margin-bottom:14px;border-color:var(--cc-bad)">
+      <div class="card-body" style="display:flex;align-items:center;gap:14px">
+        <div style="flex:1"><b>${live.length} GPU running right now</b>
+          <div class="muted-sm">${live.map(p =>
+            `${esc(p.name || p.id)} — ${mins(p.uptime_s)}, $${p.spent_so_far} so far`
+          ).join('<br>')}</div></div>
+        <button class="btn danger" id="stopAll">Stop now</button>
+      </div></div>` : ''}
+
+    <div class="card" style="margin-bottom:14px"><div class="card-body">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <span class="status ${c.ok ? 'ok' : c.configured ? 'warn' : ''}">${
+          c.ok ? 'connected' : c.configured ? 'not connecting' : 'not set up'}</span>
+        ${c.ok ? `<span class="muted-sm">balance $${c.balance_usd}${
+          c.gpu_price ? ` · ${esc(c.gpu)} at $${c.gpu_price}/hr` : ''}</span>` : ''}
+        ${c.error ? `<span class="muted-sm" style="color:var(--cc-bad-fg)">${esc(c.error)}</span>` : ''}
+      </div>
+
+      <label class="lbl">RunPod API key</label>
+      <div style="display:flex;gap:8px;margin:6px 0 4px">
+        <input class="field" id="ckey" type="password" style="flex:1"
+          placeholder="${c.configured ? esc(c.key_hint) + '  (leave blank to keep)' : 'paste your key'}">
+        <button class="btn secondary" id="csave">Save</button>
+      </div>
+      <p class="muted-sm" style="margin:0 0 16px">From runpod.io → Settings → API Keys.
+        Stored on this computer only.</p>
+
+      <div class="grid g2">
+        <div><label class="lbl">Graphics card to rent</label>
+          <select class="field sm" id="cgpu" style="margin-top:6px">
+            ${['NVIDIA GeForce RTX 4090','NVIDIA GeForce RTX 3090','NVIDIA GeForce RTX 5090',
+               'NVIDIA L40S','NVIDIA RTX A4000'].map(g =>
+              `<option${g === c.gpu ? ' selected' : ''}>${esc(g)}</option>`).join('')}
+          </select>
+          <p class="muted-sm" style="margin:6px 0 0">A 3090 costs a third less than a 4090
+            and is nearly as quick for this — measured, not guessed.</p></div>
+        <div><label class="lbl">Spending limit this month (US$)</label>
+          <input class="field sm" id="climit" type="number" min="1" step="1"
+                 value="${sp.limit_usd ?? 25}" style="margin-top:6px">
+          <p class="muted-sm" style="margin:6px 0 0">Detection refuses to start once this
+            is used up. It is a stop, not a warning.</p></div>
+      </div>
+
+      <label class="chk" style="margin-top:16px"><input type="checkbox" id="cen"${
+        c.enabled ? ' checked' : ''}> Use the rented GPU for detection</label>
+      <p class="muted-sm" style="margin:6px 0 0">Off means everything runs on this computer,
+        free and slower. A rented GPU stops on its own after
+        ${Math.round((c.idle_seconds || 300) / 60)} minutes with nothing to do, and again
+        when the app next starts.</p>
+    </div></div>
+
+    <div class="card"><div class="card-body">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <h2 style="margin:0;font-size:17px">Spent this month</h2>
+        <span style="flex:1"></span>
+        <span class="big" style="font-size:22px">$${(sp.month_usd ?? 0).toFixed(2)}</span>
+        <span class="muted-sm">of $${(sp.limit_usd ?? 0).toFixed(2)}</span>
+      </div>
+      <div style="height:8px;background:var(--cc-hover);border-radius:4px;overflow:hidden;
+                  margin:10px 0 6px">
+        <i style="display:block;height:100%;width:${pct}%;background:${
+          pct > 90 ? 'var(--cc-bad)' : pct > 70 ? 'var(--cc-warn)' : 'var(--cc-ok)'}"></i></div>
+      <p class="muted-sm" style="margin:0">${sp.runs_this_month ?? 0} run(s)${
+        sp.live_usd ? ` · $${sp.live_usd} of that is still running` : ''}
+        · <a href="#runs">see every run</a></p>
+    </div></div>
+  </div>`;
+
+  const sa = $('#stopAll');
+  if (sa) sa.onclick = async () => {
+    sa.disabled = true; sa.textContent = 'Stopping…';
+    const r = await api('/api/cloud/stop', {});
+    toast(`Stopped ${r.stopped.length} GPU(s)`); viewSettings();
+  };
+  $('#csave').onclick = async () => {
+    const key = $('#ckey').value.trim();
+    try {
+      await api('/api/cloud/settings', {
+        key: key || null, gpu: $('#cgpu').value,
+        limit_usd: parseFloat($('#climit').value), enabled: $('#cen').checked,
+      });
+      toast('Saved'); viewSettings();
+    } catch (e) { toast(e.message, true); }
+  };
+  ['cgpu', 'climit', 'cen'].forEach(idd => {
+    const el = $('#' + idd);
+    if (el) el.onchange = () => $('#csave').click();
+  });
+}
+
+async function viewRuns(_) {
+  const d = await api('/api/cloud/runs', undefined, 'GET');
+  app.innerHTML = `<div class="wrap">
+    <div class="page-head" style="margin-bottom:18px">
+      <div><h1>GPU runs</h1><p>every rented machine, what it did and what it cost</p></div>
+      <a class="btn ghost" href="#settings">Back</a></div>
+    <div class="card"><table><thead><tr><th>Started</th><th>Card</th>
+      <th class="right">Ran for</th><th class="right">Cost</th><th>State</th><th>Note</th>
+      </tr></thead><tbody>
+      ${(d.runs || []).length ? d.runs.map(r => `<tr>
+        <td class="mono">${r.started ? new Date(r.started * 1000).toLocaleString() : '—'}</td>
+        <td>${esc(r.gpu || '')}</td>
+        <td class="right">${r.seconds ? mins(r.seconds) : '—'}</td>
+        <td class="right num">$${(r.usd ?? 0).toFixed(3)}</td>
+        <td><span class="status ${r.status === 'stopped' ? 'ok' : 'warn'}">${esc(r.status)}</span></td>
+        <td class="muted-sm">${esc(r.note || '')}</td></tr>`).join('')
+        : '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--cc-fg-3)">No GPU has been rented yet.</td></tr>'}
+      </tbody></table></div>
+  </div>`;
+}
+
 /* ─────────────────────────── voice ─────────────────────────── */
 /* Voice drives exactly the same answer() the buttons and keys do. One path to a verdict,
    so there is no way for a spoken answer to be saved differently from a clicked one. */
@@ -809,11 +935,15 @@ async function viewReport(id) {
   const d = await api(`/api/stations/${id}/report`, undefined, 'GET');
   const wireAnnotate = () => app.querySelectorAll('[data-annot]').forEach(b => {
     b.onclick = async () => {
+      const was = b.textContent;
       b.disabled = true; b.textContent = 'Queued…';
       try {
         await api(`/api/clips/${b.dataset.annot}/annotate`, {});
         toast('Making the video — it queues behind any detection still running');
-      } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = 'Make video'; }
+        // Poll for it rather than leaving a dead "Queued…" button: a render takes
+        // minutes, and until now the only way to learn it had finished was to reload.
+        watchRender(+b.dataset.annot, b);
+      } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = was; }
     };
   });
   if (d.empty) {
@@ -891,14 +1021,40 @@ async function viewReport(id) {
           : (c.checks || []).length
             ? `<span class="status warn">${c.checks.length} to look at</span>`
             : '<span class="status ok">fine</span>'}</td>
+        ${/* A stale render is worse than none: it is an older answer in the most
+              convincing possible format. Offer the remake, and say why. */''}
         <td>${c.annotated
           ? `<a class="btn sm ghost" href="/api/clips/${c.video_id}/annotated.mp4"
-               target="_blank">▶ Watch</a>`
+               download>${c.annotated_stale ? 'Watch (old)' : '▶ Watch'}</a>
+             ${c.annotated_stale ? `<button class="btn sm ghost" data-annot="${c.video_id}"
+               title="Made before your corrections">Remake</button>` : ''}`
           : `<button class="btn sm ghost" data-annot="${c.video_id}">Make video</button>`}
         </td></tr>`).join('')}
       </tbody></table></div>
   </div>`;
   wireAnnotate();
+}
+
+/* Renders run in the same queue as detection, so "queued" can mean several minutes. The
+   button reports what the job is actually doing instead of going quiet. */
+function watchRender(vid, btn) {
+  const t = setInterval(async () => {
+    if (!document.body.contains(btn)) return clearInterval(t);
+    let s;
+    try { s = await api(`/api/clips/${vid}/render_state`, undefined, 'GET'); }
+    catch { return; }
+    if (s.job === 'waiting') { btn.textContent = 'Waiting its turn…'; return; }
+    if (s.job === 'running') {
+      btn.textContent = s.progress ? `Rendering ${Math.round(s.progress)}%` : 'Rendering…';
+      return;
+    }
+    clearInterval(t);
+    if (s.job === 'error') {
+      btn.disabled = false; btn.textContent = 'Failed — retry';
+      return toast(`Video failed: ${s.message || 'no reason recorded'}`, true);
+    }
+    toast('Video ready'); route();
+  }, 4000);
 }
 
 /* ─────────────────────────── modal + router ─────────────────────────── */
@@ -941,6 +1097,8 @@ async function route() {
   clearInterval(POLL);
   const [name, a, b] = location.hash.replace(/^#/, '').split('/');
   try {
+    if (name === 'settings') return await viewSettings();
+    if (name === 'runs') return await viewRuns();
     if (name === 'station' && a) return await viewStation(+a);
     if (name === 'review' && a) return await viewReview(+a, b);
     if (name === 'report' && a) return await viewReport(+a);

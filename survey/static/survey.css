@@ -123,3 +123,11 @@
 .seg button { border: 0; background: none; font: inherit; font-size: 13px;
               padding: 7px 14px; cursor: pointer; color: var(--cc-fg-2); }
 .seg button.on { background: var(--cc-acc); color: #fff; font-weight: 600; }
+
+/* Settings. A checkbox that spends money should not look like a filter, so it gets a
+   real label with a hit area rather than a bare box, and the field/select pair is sized
+   down because these are settings, not the primary action on the page. */
+.chk { display: inline-flex; align-items: center; gap: 8px; font-size: 14px;
+       cursor: pointer; user-select: none; }
+.chk input { width: 16px; height: 16px; accent-color: var(--cc-acc); cursor: pointer; }
+.field.sm { height: 34px; padding: 0 10px; font-size: 13px; }

@@ -56,19 +56,33 @@ def real_fps(stream):
     return avg or measured or base or 25.0
 
 
-def _ffprobe():
-    """ffprobe, from the bundle if this is a packaged build, else from PATH.
+def _bundled(tool):
+    """An ffmpeg-family binary, from the bundle if this is a packaged build, else PATH.
 
-    A frozen Windows build has no system ffprobe and no PATH entry for one, so the plain
-    name fails and every recording looks unreadable. sys._MEIPASS is where PyInstaller
+    A frozen Windows build has no system ffmpeg or ffprobe and no PATH entry for either,
+    so the plain name fails: every recording reads as unreadable, and every annotated
+    video comes out in a format no browser will play. sys._MEIPASS is where PyInstaller
     unpacks bundled binaries.
+
+    Returns None when there is genuinely no copy, so a caller can fall back rather than
+    shell out to a name that does not exist.
     """
     import shutil
     base = Path(getattr(sys, "_MEIPASS", ""))
-    for c in (base / "ffprobe.exe", base / "ffprobe"):
+    for c in (base / f"{tool}.exe", base / tool):
         if c.is_file():
             return str(c)
-    return shutil.which("ffprobe") or "ffprobe"
+    return shutil.which(tool)
+
+
+def _ffprobe():
+    return _bundled("ffprobe") or "ffprobe"
+
+
+def ffmpeg_bin():
+    """The encoder, or None. Public because render.py needs it and there should be
+    exactly one place that knows where these binaries live."""
+    return _bundled("ffmpeg")
 
 
 def probe(path):

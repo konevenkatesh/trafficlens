@@ -24,12 +24,14 @@ datas = [
     (str(ROOT / "benchmark" / "bytetrack_low.yaml"), "benchmark"),
 ]
 
-# ffprobe. Both apps shell out to it to read a recording's duration and frame rate, and
-# Windows has no system copy -- without it every file reads as unreadable and the folder
-# cannot be attached at all. The CI drops a static build here before freezing.
-_ff = ROOT / "vendor" / "ffprobe.exe"
-if _ff.is_file():
-    datas.append((str(_ff), "."))
+# ffprobe AND ffmpeg. Windows has neither, and each absence breaks a different thing:
+# without ffprobe no recording can be read at all, and without ffmpeg the annotated video
+# comes out in a format no browser plays -- OpenCV's Windows build has no H.264 encoder
+# and its mp4v fallback is not web video. The CI drops both here before freezing.
+for _name in ("ffprobe.exe", "ffmpeg.exe"):
+    _ff = ROOT / "vendor" / _name
+    if _ff.is_file():
+        datas.append((str(_ff), "."))
 
 # The detector and the universal heads ship inside the app. A surveyor cannot be asked to
 # fetch weights, and an app that downloads them on first run fails on exactly the

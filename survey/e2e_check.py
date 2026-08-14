@@ -124,6 +124,39 @@ def main():
     step("review queue builds",
          lambda: f"{len(api(f'/api/stations/{sid}/review?mode=all&limit=5')['items'])} item(s)")
 
+    # The annotated video. With nothing detected there is nothing to draw, so what is
+    # tested here is that the app says so instead of erroring, and that the state
+    # endpoint the button polls answers at all -- a 404 or a 500 there leaves the
+    # surveyor watching a button that says "Queued…" forever. The encoder itself is
+    # proved separately, by encoder_check.py, which does not need vehicles.
+    vid = None
+    for h in api(f"/api/stations/{sid}").get("hours") or []:
+        for f in h.get("files") or []:
+            vid = f["video_id"]
+            break
+        if vid:
+            break
+
+    def annotate_state():
+        st = api(f"/api/clips/{vid}/render_state")
+        for k in ("ready", "stale"):
+            if k not in st:
+                raise KeyError(f"render_state is missing {k}")
+        return f"ready={st['ready']} stale={st['stale']} job={st.get('job')}"
+
+    if vid:
+        step("annotated-video state reads", annotate_state)
+
+        def annotate_guard():
+            try:
+                api(f"/api/clips/{vid}/annotate", {})
+                return "accepted the render"
+            except urllib.error.HTTPError as e:
+                if e.code == 400:
+                    return "declined cleanly with 400 — nothing detected to draw"
+                raise
+        step("annotate refuses when there is nothing to draw", annotate_guard)
+
     rep = step("build the report", lambda: api(f"/api/stations/{sid}/report"))
     if rep is not None and rep.get("empty") and tracks:
         FAILED.append("report came back empty despite detections")

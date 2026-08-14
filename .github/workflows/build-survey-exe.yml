@@ -44,20 +44,25 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Fetch ffprobe
-        # Windows ships no ffprobe, and the app cannot read a recording's duration or
-        # frame rate without one — every file would look unreadable. A static build is
-        # vendored into the bundle rather than asking the surveyor to install anything.
+      - name: Fetch ffprobe and ffmpeg
+        # Windows ships neither, and each absence breaks a different thing. Without
+        # ffprobe the app cannot read a recording's duration or frame rate, so every file
+        # looks unreadable. Without ffmpeg the annotated video cannot be encoded: OpenCV's
+        # Windows build has no H.264 encoder (it asks for an openh264 DLL nobody has) and
+        # its mp4v fallback produces a file no browser will play. Both are vendored into
+        # the bundle rather than asking the surveyor to install anything.
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force vendor | Out-Null
           $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
           Invoke-WebRequest -UseBasicParsing $url -OutFile ff.zip
           Expand-Archive ff.zip -DestinationPath fftmp
-          $probe = Get-ChildItem fftmp -Recurse -Filter ffprobe.exe | Select-Object -First 1
-          if (-not $probe) { throw "ffprobe.exe not found in the archive" }
-          Copy-Item $probe.FullName vendor/ffprobe.exe
-          Write-Host "vendored $($probe.FullName)"
+          foreach ($n in "ffprobe.exe", "ffmpeg.exe") {
+            $f = Get-ChildItem fftmp -Recurse -Filter $n | Select-Object -First 1
+            if (-not $f) { throw "$n not found in the archive" }
+            Copy-Item $f.FullName "vendor/$n"
+            Write-Host ("vendored {0}  {1:N0} MB" -f $n, ($f.Length/1MB))
+          }
 
       - name: Check the app imports before freezing it
         # A missing import found here costs 30 seconds; found after a 20-minute freeze it
@@ -65,8 +70,34 @@ jobs:
         run: |
           python -c "import sys; sys.path[:0]=['survey','app']; sys.path.append('lab'); import api, work, seed; print('imports OK')"
 
+      - name: Check the encoder can make a playable video
+        # The end-to-end run cannot reach this. It works on a generated test pattern with
+        # no vehicles in it, so /annotate correctly refuses and the encoder is never
+        # exercised -- which is how a Windows build that could not produce a playable
+        # annotated video shipped without CI noticing.
+        env:
+          PATH_HINT: vendor       # engine._bundled falls back to PATH; point it at ours
+        shell: pwsh
+        run: |
+          $env:PATH = "$PWD\vendor;$env:PATH"
+          python survey/encoder_check.py
+          if ($LASTEXITCODE -ne 0) { throw "this build cannot produce a playable video" }
+
       - name: Build
         run: pyinstaller --noconfirm --clean survey/TrafficLens.spec
+
+      - name: Check the vendored binaries survived the freeze
+        # A missing ffprobe makes every recording unreadable; a missing ffmpeg makes every
+        # annotated video unplayable. Both failures only appear on the surveyor's laptop,
+        # and the second one appeared there once already. PyInstaller silently drops a
+        # `datas` entry whose source file was not present, so this checks the output.
+        shell: pwsh
+        run: |
+          foreach ($n in "ffprobe.exe", "ffmpeg.exe") {
+            $f = Get-ChildItem dist/TrafficLens -Recurse -Filter $n | Select-Object -First 1
+            if (-not $f) { throw "$n is not in the bundle" }
+            Write-Host ("bundled {0}  {1:N0} MB" -f $f.FullName, ($f.Length/1MB))
+          }
 
       - name: Smoke-test the binary
         # A build that produces an .exe which dies on launch is worse than a failed

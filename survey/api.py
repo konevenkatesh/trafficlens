@@ -418,6 +418,47 @@ def review_image(video_id: int, track_id: int, kind: str):
     return FileResponse(p, media_type="image/jpeg")
 
 
+# ───────────────────────────── cloud GPU ─────────────────────────────
+class CloudIn(BaseModel):
+    key: str | None = None
+    gpu: str | None = None
+    limit_usd: float | None = None
+    enabled: bool | None = None
+
+
+@app.get("/api/cloud")
+def cloud_status():
+    """Connection, price, spend and anything running — one call, safe with no key."""
+    import cloud
+    return cloud.status()
+
+
+@app.post("/api/cloud/settings")
+def cloud_save(body: CloudIn):
+    import cloud
+    cloud.save_config(key=body.key, gpu=body.gpu,
+                      limit_usd=body.limit_usd, enabled=body.enabled)
+    return cloud.status()
+
+
+@app.post("/api/cloud/stop")
+def cloud_stop():
+    """Kill every pod, now. The button for when somebody is not sure."""
+    import cloud
+    return {**cloud.stop_all(), "status": cloud.status()}
+
+
+@app.get("/api/cloud/runs")
+def cloud_runs(limit: int = 30):
+    """The spending ledger, newest first — what ran, for how long, what it cost."""
+    import cloud
+    cloud.init()
+    return {"runs": db.rows("""SELECT pod_id,gpu,cost_per_hr,started,stopped,seconds,
+                                      usd,status,clips,note
+                               FROM cloud_runs ORDER BY id DESC LIMIT ?""", limit),
+            "spend": cloud.spend()}
+
+
 # ───────────────────────────── annotated video ─────────────────────────────
 def _render_path(video_id):
     """Where this recording's annotated video actually is.
@@ -443,6 +484,28 @@ def _render_path(video_id):
     return p if p.is_file() else None
 
 
+def _render_state(video_id):
+    """Whether a render exists and whether it still tells the truth.
+
+    A render draws the class the vehicle is currently recorded as, and the count that
+    follows from it — so corrections DO reach the video, but only the next time it is
+    made. A render finished before a reviewer reclassified twenty vehicles is now a
+    picture of an older answer, and offering it as "Watch" makes the app lie in the most
+    convincing possible format. So the file's own mtime is compared against the newest
+    verdict for that recording, and an older file is offered as a remake instead.
+    """
+    p = _render_path(video_id)
+    if not p:
+        return {"ready": False, "stale": False}
+    made = p.stat().st_mtime
+    try:
+        last = (db.one("SELECT MAX(created) c FROM clip_verdicts WHERE video_id=?",
+                       video_id) or {}).get("c")
+    except Exception:      # no verdicts table yet — nothing has been reviewed
+        last = None
+    return {"ready": True, "made": made, "stale": bool(last and last > made)}
+
+
 @app.post("/api/clips/{video_id}/annotate")
 def annotate(video_id: int):
     """Draw the boxes, tracks and the count line onto the footage.
@@ -460,6 +523,29 @@ def annotate(video_id: int):
     if r.get("error"):
         raise HTTPException(400, r["error"])
     return {**r, "queue": work.queue_state()}
+
+
+@app.get("/api/clips/{video_id}/render_state")
+def render_state(video_id: int):
+    """One answer to "where is my video". Readiness, staleness and the running job in a
+    single call, so the button can report progress instead of saying "Queued…" for six
+    minutes and then nothing."""
+    st = _render_state(video_id)
+    q = work.queue_state()
+    if any(j["video_id"] == video_id and j.get("kind") == "render"
+           for j in (q.get("waiting") or [])):
+        return {**st, "job": "waiting"}
+    if any(j["video_id"] == video_id and j.get("kind") == "render"
+           for j in (q.get("running_all") or [])):
+        j = db.one("""SELECT progress,message FROM jobs WHERE video_id=? AND kind='render'
+                      ORDER BY id DESC LIMIT 1""", video_id) or {}
+        return {**st, "job": "running", "progress": j.get("progress") or 0,
+                "message": j.get("message")}
+    j = db.one("""SELECT status,message FROM jobs WHERE video_id=? AND kind='render'
+                  ORDER BY id DESC LIMIT 1""", video_id) or {}
+    if j.get("status") == "error" and not st["ready"]:
+        return {**st, "job": "error", "message": j.get("message")}
+    return {**st, "job": None}
 
 
 @app.get("/api/clips/{video_id}/annotated.mp4")
@@ -550,7 +636,8 @@ def report(site_id: int):
         clips.append({"video_id": vid, "name": c["video"]["name"],
                       "start": c["video"]["start_clock"], "total": c["total"],
                       "pcu": c["pcu_total"],
-                      "annotated": bool(_render_path(vid)),
+                      **{"annotated": (_st := _render_state(vid))["ready"],
+                         "annotated_stale": _st["stale"]},
                       "checks": [x for x in c.get("checks", []) if x.get("level") != "ok"]})
     bins.sort(key=lambda b: b["t"])
     overlaps = _overlaps(vids)

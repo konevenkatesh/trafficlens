@@ -100,6 +100,19 @@ def main():
     except Exception as e:
         print(f"  WARNING: could not register the bundled models: {e}", flush=True)
 
+    # A pod outlives the app that started it. Anything still running from a previous
+    # session is orphaned and billing, so it is killed before anything else happens, and
+    # the idle watchdog is armed for this one.
+    try:
+        import cloud
+        r = cloud.reconcile_on_start()
+        if r.get("orphans"):
+            print(f"  stopped {len(r['orphans'])} GPU pod(s) left from a previous session"
+                  f"  (${r['recovered_usd']})", flush=True)
+        cloud.start_watchdog()
+    except Exception as e:
+        print(f"  WARNING: could not check for running GPU pods: {e}", flush=True)
+
     import api
     port = _free_port()
     url = f"http://127.0.0.1:{port}"
