@@ -3,9 +3,17 @@
 `cloud.py` owns the account and the money. This owns the work: bring a pod up, put the
 model and the video on it, run, bring the trajectories back, and write them into the same
 tables a local extraction writes. Everything downstream — counting, review, the report —
-cannot tell which machine produced a track, and that is the requirement. A count that
-depends on where it was computed would make this a different product rather than a
-faster one.
+cannot tell which machine produced a track.
+
+**It is the same code, not the same number.** Same weights, same tracker, same stride,
+same vote-per-track logic: running the agent and `engine.extract` on one machine gives
+byte-identical output — 86 tracks and 5117 points, every field equal, when this was
+checked. Across GPU backends it does not. The same clip gave 86 tracks on an Apple GPU
+and 83 on a rented RTX 4090: about 3.5% of tracks, at the margins where a detection sits
+either side of the confidence floor. That is floating-point arithmetic differing between
+Metal and CUDA, not a defect here, and it is the same difference the surveyor would see
+moving between any two machines. Worth knowing before a clip is re-run somewhere else and
+the total shifts slightly.
 
 **One pod, reused.** Bringing a pod up costs 2-4 minutes of image pull and boot, billed.
 Doing that per clip on a 24-hour station would spend more on booting than on detecting.
@@ -67,10 +75,17 @@ def _docker_args(token):
     log into to diagnose.
     """
     b64 = base64.b64encode(_agent_source().encode()).decode()
+    # The agent lives in /work, NOT in /. Python puts the script's own directory at the
+    # front of sys.path, and this image keeps its source checkout at /ultralytics -- so an
+    # agent at /agent.py made "/" the import root, where the directory /ultralytics
+    # shadowed the installed package. The pod came up healthy, took the weights and the
+    # video, and only then failed with "cannot import name 'YOLO' from 'ultralytics'
+    # (unknown location)". /work has nothing in it to collide with.
     return ("bash -c '"
             f"export TL_TOKEN={token} TL_PORT={AGENT_PORT}; "
-            f"echo {b64} | base64 -d > /agent.py; "
-            "python3 /agent.py"
+            "mkdir -p /work; "
+            f"echo {b64} | base64 -d > /work/agent.py; "
+            "cd /work && python3 /work/agent.py"
             "'")
 
 
@@ -98,26 +113,45 @@ def _create(gpu, token):
     """
     q = """mutation ($in: PodFindAndDeployOnDemandInput) {
              podFindAndDeployOnDemand(input: $in) { id name costPerHr } }"""
-    args = {"in": {
-        "cloudType": "COMMUNITY", "gpuCount": 1, "gpuTypeId": gpu,
+    base = {
+        "gpuCount": 1, "gpuTypeId": gpu,
         "name": "trafficlens", "imageName": IMAGE,
         "dockerArgs": _docker_args(token),
         "ports": f"{AGENT_PORT}/http",
         # No network volume: the pod keeps nothing between runs, and a volume is billed
         # after the pod is gone -- the one charge that survives "stop everything".
-        "volumeInGb": 0, "containerDiskInGb": 40,
-        "minVcpuCount": 8, "minMemoryInGb": 24,
+        "volumeInGb": 0, "containerDiskInGb": 30,
         "startSsh": False,
-    }}
-    d, err = _gql_retry(q, args)
-    if err:
-        return None, err
-    pod = ((d or {}).get("podFindAndDeployOnDemand") or {})
+    }
+    # CPU and RAM are deliberately NOT specified. Asking for 8 vCPU and 24GB looked
+    # harmless and was rejected outright with "this machine does not have the resources"
+    # -- RunPod's 4090 hosts offer 5 vCPU, so a card sitting at High stock was refused
+    # over a requirement this workload never had. The host's own pairing for the GPU is
+    # right by definition; naming numbers only narrows what can be found.
+    #
+    # Community first because it is cheaper, then secure. Capacity moves hour to hour and
+    # a survey should not stop because one pool happened to be empty.
+    err = None
+    got = None
+    for kind in ("COMMUNITY", "SECURE"):
+        d, err = _gql_retry(q, {"in": {**base, "cloudType": kind}}, tries=2)
+        pod = ((d or {}).get("podFindAndDeployOnDemand") or {}) if d else {}
+        if pod.get("id"):
+            got = kind
+            break
+    else:
+        pod = {}
     if not pod.get("id"):
-        return None, f"RunPod did not give a {gpu} — try another card in Settings"
+        return None, (err or f"no {gpu} was free just now — try another card in Settings")
+    # The real price, not the advertised one. Settings quotes RunPod's lowest listed
+    # price for the card; the machine actually allocated can cost more than double that
+    # -- the first 4090 this rented billed $0.74/hr against a $0.34 quote. Recording what
+    # was really charged is the difference between a ledger and a guess.
+    rate = pod.get("costPerHr") or 0
     db.run("""INSERT INTO cloud_runs (pod_id,gpu,cost_per_hr,started,status,note)
               VALUES (?,?,?,?,'starting',?)""",
-           pod["id"], gpu, pod.get("costPerHr") or 0, time.time(), "detection")
+           pod["id"], gpu, rate, time.time(),
+           f"detection · {got.lower()} cloud · ${rate:.2f}/hr")
     return {"id": pod["id"], "token": token,
             "cost_per_hr": pod.get("costPerHr") or 0}, None
 

@@ -501,6 +501,20 @@ def device_note():
     in. The multiplier is measured: ~3.8x realtime on Apple GPU, similar on CUDA, and
     roughly 0.4x on CPU.
     """
+    # A rented GPU is not this machine, and the surveyor is spending money the moment
+    # detection starts. Saying "Running on CPU" while billing a 4090 would be the app's
+    # most expensive lie, so the cloud answer comes first.
+    try:
+        import remote
+        if remote.in_use():
+            import cloud
+            c = cloud.config()
+            return {"device": "cloud", "name": f"rented {c['gpu']}", "speed": 8.0,
+                    "note": "detection runs on a rented GPU and costs money",
+                    "cloud": True}
+    except Exception:
+        pass
+
     try:
         import torch
         if torch.cuda.is_available():

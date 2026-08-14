@@ -52,6 +52,13 @@ async function viewStations() {
       <h1>Traffic counts</h1>
       <p>Point the app at a folder of camera footage and it produces the count.</p></div></div>
 
+    ${dev.cloud ? `<div class="card" style="margin-bottom:16px;border-color:var(--cc-acc)">
+      <div class="card-body" style="display:flex;align-items:center;gap:12px">
+        <div style="flex:1"><b>Detection runs on a rented GPU.</b>
+          Much faster than this computer, and it costs money while it runs.
+          <span class="muted-sm">${esc(dev.name)}</span></div>
+        <a class="btn ghost sm" href="#settings">Settings</a></div></div>` : ''}
+
     ${dev.device === 'cpu' ? `<div class="card" style="margin-bottom:16px;border-color:var(--cc-warn)">
       <div class="card-body"><b>No graphics card found.</b> Detection will run on the
       processor, which is about nine times slower — roughly 35 minutes per 15 minutes of
@@ -503,8 +510,11 @@ async function viewSettings() {
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
         <span class="status ${c.ok ? 'ok' : c.configured ? 'warn' : ''}">${
           c.ok ? 'connected' : c.configured ? 'not connecting' : 'not set up'}</span>
+        ${/* "from", not "at". This is RunPod's lowest listed price for the card; the
+              machine actually allocated can bill more than double it. The runs page shows
+              what was really charged. */''}
         ${c.ok ? `<span class="muted-sm">balance $${c.balance_usd}${
-          c.gpu_price ? ` · ${esc(c.gpu)} at $${c.gpu_price}/hr` : ''}</span>` : ''}
+          c.gpu_price ? ` · ${esc(c.gpu)} from $${c.gpu_price}/hr` : ''}</span>` : ''}
         ${c.error ? `<span class="muted-sm" style="color:var(--cc-bad-fg)">${esc(c.error)}</span>` : ''}
       </div>
 
@@ -530,7 +540,10 @@ async function viewSettings() {
           <input class="field sm" id="climit" type="number" min="1" step="1"
                  value="${sp.limit_usd ?? 25}" style="margin-top:6px">
           <p class="muted-sm" style="margin:6px 0 0">Detection refuses to start once this
-            is used up. It is a stop, not a warning.</p></div>
+            is used up, and a GPU already running is stopped. It is a stop, not a
+            warning. The card's real price is set when a machine is allocated and can be
+            higher than the listed one — <a href="#runs">the runs page</a> shows what was
+            actually charged.</p></div>
       </div>
 
       <label class="chk" style="margin-top:16px"><input type="checkbox" id="cen"${

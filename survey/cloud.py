@@ -227,17 +227,45 @@ def spend():
     long run blow straight through it.
     """
     init()
+    pods = live_pods()
+    _close_stale({p["id"] for p in pods})
     now = datetime.now(timezone.utc)
     month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc).timestamp()
     done = db.one("""SELECT COALESCE(SUM(usd),0) usd, COUNT(*) n FROM cloud_runs
                      WHERE started >= ? AND status='stopped'""", month_start) or {}
-    live = sum(p["spent_so_far"] for p in live_pods())
+    live = sum(p["spent_so_far"] for p in pods)
     total = round((done.get("usd") or 0) + live, 3)
     limit = float(_setting("runpod_limit_usd", "25") or 25)
     return {"month_usd": total, "live_usd": round(live, 3),
             "runs_this_month": done.get("n") or 0,
             "limit_usd": limit, "remaining_usd": round(max(0.0, limit - total), 3),
             "over_limit": total >= limit}
+
+
+def _close_stale(live_ids):
+    """Close ledger rows whose pod no longer exists.
+
+    Only rows marked 'stopped' count towards the month, so a run that ended without this
+    process seeing it -- the app was killed, the pod was terminated from the RunPod
+    dashboard, a create half-succeeded -- stayed open and contributed exactly nothing to
+    the total. Money genuinely spent, invisible to the limit that is supposed to cap it.
+
+    The end time is unknown, so it is taken as now. That over-states the cost of a pod
+    that died hours ago, which is the right direction to be wrong in for a budget: it
+    stops sooner rather than later, and the RunPod dashboard remains the authority on
+    what was actually billed.
+    """
+    open_rows = db.rows("""SELECT id, pod_id, cost_per_hr, started FROM cloud_runs
+                           WHERE status != 'stopped'""")
+    now = time.time()
+    for r in open_rows:
+        if r["pod_id"] in live_ids:
+            continue
+        ran = max(0.0, now - (r["started"] or now))
+        db.run("""UPDATE cloud_runs SET status='stopped', stopped=?, seconds=?, usd=?,
+                    note = COALESCE(note,'') || ' · closed late; cost is an upper bound'
+                  WHERE id=?""",
+               now, round(ran, 1), round((r["cost_per_hr"] or 0) * ran / 3600.0, 4), r["id"])
 
 
 def may_start():

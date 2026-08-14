@@ -37,14 +37,46 @@ STATE = {"phase": "idle", "pct": 0.0, "message": "waiting for work",
          "error": None, "result": None, "started": None}
 LOCK = threading.Lock()
 
+# How long this agent stays alive with nobody talking to it, and the absolute ceiling
+# whatever happens. Both are backstops for the case the app cannot cover: its own
+# watchdog and its start-up reconcile both need the app to still be running, so a laptop
+# that loses power mid-survey leaves a GPU with nobody watching it.
+#
+# RunPod has no server-side idle-terminate -- checked against its schema, not assumed --
+# so the only thing that can act on a pod nobody is talking to is the pod. Exiting
+# releases the GPU; whether the pod record then stops billing entirely is the provider's
+# behaviour, not something this can guarantee. It is strictly better than running
+# forever, and it is not a substitute for the app terminating the pod properly.
+IDLE_EXIT = float(os.environ.get("TL_IDLE_EXIT", 900))
+MAX_LIFE = float(os.environ.get("TL_MAX_LIFE", 6 * 3600))
+_SEEN = [time.time()]
+_BORN = time.time()
+
+
+def _reaper():
+    while True:
+        time.sleep(30)
+        with LOCK:
+            busy = STATE["phase"] in ("loading", "running")
+        idle = time.time() - _SEEN[0]
+        old = time.time() - _BORN
+        if (not busy and idle > IDLE_EXIT) or old > MAX_LIFE:
+            why = "idle" if not busy else "max lifetime"
+            print(f"exiting: {why} ({idle:.0f}s idle, {old:.0f}s old)", flush=True)
+            os._exit(0)
+
 
 def _extract(job):
     """Track one video and leave the result in STATE.
 
     A near-copy of the app's local extract(), minus the database: same model, same
-    tracker config, same stride arithmetic, same vote-per-track class. It has to be the
-    same, or a count would depend on where it was computed — which would make the cloud
-    option a different product rather than a faster one.
+    tracker config, same stride arithmetic, same vote-per-track class. Kept deliberately
+    in step, because the cloud should be the faster way to get the answer rather than a
+    different answer.
+
+    Identical code still does not mean an identical number across GPU backends — one
+    clip gave 86 tracks on Metal and 83 on CUDA. Any change here widens that gap on
+    purpose rather than by accident, so it should be made in engine.extract too.
     """
     from collections import Counter
     from ultralytics import YOLO
@@ -126,6 +158,7 @@ class H(BaseHTTPRequestHandler):
         if TOKEN and self.headers.get("X-Token") != TOKEN:
             self._json(403, {"error": "bad token"})
             return False
+        _SEEN[0] = time.time()      # only a real caller counts as "somebody is using this"
         return True
 
     def do_GET(self):
@@ -196,5 +229,7 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     (WORK / "video").mkdir(parents=True, exist_ok=True)
     (WORK / "models").mkdir(parents=True, exist_ok=True)
-    print(f"agent listening on {PORT}", flush=True)
+    threading.Thread(target=_reaper, daemon=True).start()
+    print(f"agent listening on {PORT} "
+          f"(exits after {IDLE_EXIT:.0f}s idle, {MAX_LIFE / 3600:.0f}h max)", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
