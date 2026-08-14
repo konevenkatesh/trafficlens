@@ -119,6 +119,13 @@ def _extract(job):
     tracks = [{"track_id": tid, "cls": v.most_common(1)[0][0], "votes": dict(v),
                "t_start": span[tid][0], "t_end": span[tid][1],
                "n_points": sum(v.values())} for tid, v in votes.items()]
+    # The clip is consumed; the results are in memory and about to be collected. Dropping
+    # it here rather than waiting to be told means a survey cannot fill the container disk
+    # just because the app died between finishing a clip and tidying up after it.
+    try:
+        video.unlink()
+    except OSError:
+        pass
     with LOCK:
         STATE.update(phase="done", pct=100.0, error=None,
                      message=f"{len(tracks)} vehicles, {len(points)} boxes",
@@ -170,9 +177,16 @@ class H(BaseHTTPRequestHandler):
         if not self._authed():
             return
         if self.path == "/progress":
+            import shutil
             with LOCK:
-                return self._json(200, {k: STATE[k] for k in
-                                        ("phase", "pct", "message", "error")})
+                out = {k: STATE[k] for k in ("phase", "pct", "message", "error")}
+            # Reported on every poll because the app now sends the next clip while this
+            # one runs. Two recordings at a gigabyte each is comfortable; a leak that
+            # keeps every clip of a station day is not, and "no space left on device"
+            # three hours in is not a diagnosable message on a machine nobody can log in
+            # to. The number makes it one.
+            out["free_gb"] = round(shutil.disk_usage(str(WORK)).free / 1e9, 1)
+            return self._json(200, out)
         if self.path == "/result":
             with LOCK:
                 r = STATE.get("result")
@@ -211,6 +225,25 @@ class H(BaseHTTPRequestHandler):
                 f.write(chunk)
                 left -= len(chunk)
         self._json(200, {"path": rel, "bytes": dest.stat().st_size})
+
+    def do_DELETE(self):
+        """Drop a file the app is finished with.
+
+        Needed once the app started uploading the next clip while this one detects: two
+        recordings at ~1GB each plus the weights fits the container disk, an unbounded
+        pile of them does not. The app deletes each video after its results are safely
+        ingested, so the pod holds at most the clip it is working on and the one arriving.
+        """
+        if not self._authed():
+            return
+        rel = self.path.lstrip("/")
+        dest = (WORK / rel).resolve()
+        if not str(dest).startswith(str(WORK.resolve()) + os.sep) or not rel.startswith("video/"):
+            return self._json(400, {"error": "bad path"})
+        existed = dest.is_file()
+        if existed:
+            dest.unlink()
+        return self._json(200, {"deleted": existed, "path": rel})
 
     def do_POST(self):
         if not self._authed():

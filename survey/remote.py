@@ -60,6 +60,13 @@ BOOT_TRIES = 2
 CHUNK = 4 << 20
 UPLOAD_TIMEOUT = 7200         # a 1GB station recording on a bad line
 LOCK = threading.Lock()
+# Uploads are serialised. Two at once share the same link and finish no sooner, and the
+# per-pod record of what has been sent would need locking anyway.
+_UPLOCK = threading.Lock()
+# How many clips ahead to send while the GPU works. One: a station recording is about a
+# gigabyte and the container disk is 30GB, so the pod holds the clip it is detecting and
+# the one arriving, never a growing pile.
+PREFETCH = 1
 _POD = {}                     # the pod this process is using, if any
 
 
@@ -270,10 +277,22 @@ def _put(pod, rel, path, on_note=None):
     """
     import http.client
 
-    seen = pod.setdefault("_sent", {})
     size = Path(path).stat().st_size
-    if seen.get(rel) == size:
-        return
+    # One upload at a time, and the have-we-sent-it check happens inside the lock. Since
+    # the next clip is now sent while the current one detects, two threads can want this
+    # at once -- and the common case is the prefetcher already sending the very file the
+    # worker has just reached, where a second copy would be pure waste.
+    with _UPLOCK:
+        seen = pod.setdefault("_sent", {})
+        if seen.get(rel) == size:
+            return
+        _upload(pod, rel, path, size, on_note)
+        seen[rel] = size
+
+
+def _upload(pod, rel, path, size, on_note):
+    import http.client
+
     name = Path(path).name
     host = _url(pod["id"]).replace("https://", "")
     conn = http.client.HTTPSConnection(host, timeout=UPLOAD_TIMEOUT, blocksize=CHUNK)
@@ -308,7 +327,68 @@ def _put(pod, rel, path, on_note=None):
                                f"{body[:120].decode(errors='replace')}")
     finally:
         conn.close()
-    seen[rel] = size
+
+
+def _forget(pod, rel):
+    """Delete a file from the pod and stop believing it is there.
+
+    Both halves matter. Deleting without forgetting makes the next upload of the same name
+    a no-op against a pod that no longer has it, and the run fails looking for a video
+    that was removed.
+    """
+    try:
+        _call(pod, "/" + rel, method="DELETE", timeout=60)
+    except Exception:
+        # Not fatal: the agent also drops each clip as it finishes with it, so this is
+        # the second of two chances. Counted rather than ignored, because if both keep
+        # failing the container disk fills part-way through a survey and the real cause
+        # would be invisible. `free_gb` from /progress is what actually notices.
+        pod["_undeleted"] = pod.get("_undeleted", 0) + 1
+    with _UPLOCK:
+        pod.setdefault("_sent", {}).pop(rel, None)
+
+
+def _prefetch(pod):
+    """Send the next queued clips while the GPU is busy with this one.
+
+    Upload and detection each cost roughly three to sixteen minutes per hour of footage,
+    and doing them in turn meant a station day paid for both end to end. They use nothing
+    in common -- one is this laptop's uplink, the other is a GPU on another continent --
+    so the only reason they were serial is that the code asked for them in order.
+
+    Fire and forget. A failure here costs nothing: the clip is simply uploaded the normal
+    way when its turn comes, which is what used to happen every time.
+    """
+    def run():
+        for path in _upcoming(PREFETCH):
+            if not _POD.get("id"):
+                return                     # pod went away; nothing to send to
+            try:
+                _put(pod, f"video/{Path(path).name}", path)
+            except Exception:
+                return
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _upcoming(limit):
+    """Paths of the next few queued extractions, newest queue state each time.
+
+    Read from the live queue rather than passed in, because the surveyor can add or cancel
+    an hour while this one runs -- a list captured earlier would send files nobody wants.
+    """
+    try:
+        import work
+        with work._QLOCK:
+            ids = [j["video_id"] for j in work._Q
+                   if j.get("kind", "extract") == "extract"][:limit]
+    except Exception:
+        return []
+    out = []
+    for vid in ids:
+        v = db.one("SELECT path FROM videos WHERE id=?", vid)
+        if v and v["path"] and Path(v["path"]).is_file():
+            out.append(v["path"])
+    return out
 
 
 # ───────────────────────────── running a clip ─────────────────────────────
@@ -348,6 +428,10 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
             "imgsz": imgsz, "conf": conf, "stride": stride,
             "frames": v["frames"]}).encode())
 
+        # The GPU is now busy for minutes. Use that time to send the next clip rather
+        # than leaving the uplink idle and then making the surveyor wait for it.
+        _prefetch(pod)
+
         last_beat = time.time()
         while True:
             time.sleep(4)
@@ -357,6 +441,11 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
                 raise RuntimeError(p.get("error") or "the GPU reported a failure")
             if p.get("phase") == "done":
                 break
+            free = p.get("free_gb")
+            if free is not None and free < 3:
+                raise RuntimeError(
+                    f"the rented machine is nearly out of disk ({free} GB free) — "
+                    f"stop and restart cloud detection to get a clean one")
             note(f"cloud: {p.get('message') or p.get('phase')}", p.get("pct"))
             if time.time() - last_beat > 3600:
                 raise TimeoutError("the clip did not finish within an hour on the GPU")
@@ -366,6 +455,9 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
         res = json.loads(gzip.decompress(blob))
         _ingest(video_id, use_id, res)
         cloud.note_work()
+        # Only once the trajectories are safely in the database. Deleting earlier would
+        # mean a failed ingest could not be retried without sending the video again.
+        _forget(pod, f"video/{Path(v['path']).name}")
 
         import dedup as dedup_mod
         d = dedup_mod.dedup(video_id)
