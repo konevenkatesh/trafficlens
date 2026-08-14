@@ -121,6 +121,15 @@ jobs:
             if (-not $f) { throw "$n is not in the bundle" }
             Write-Host ("bundled {0}  {1:N0} MB" -f $f.FullName, ($f.Length/1MB))
           }
+          # agent.py is READ at runtime, not imported -- its text is base64'd into the
+          # rented pod's start command. PyInstaller's import scan cannot see that, so it
+          # is carried by an explicit datas entry, and an explicit entry is exactly the
+          # kind that goes missing silently. Absent, the .exe raises FileNotFoundError on
+          # the first cloud clip and nowhere else -- on a surveyor's machine, mid-survey,
+          # after a pod has already been rented and paid for.
+          $a = Get-ChildItem dist/TrafficLens -Recurse -Filter agent.py | Select-Object -First 1
+          if (-not $a) { throw "agent.py is not in the bundle — cloud detection would fail at run time" }
+          Write-Host ("bundled {0}  {1:N0} bytes" -f $a.FullName, $a.Length)
 
       - name: Smoke-test the binary
         # A build that produces an .exe which dies on launch is worse than a failed
@@ -157,6 +166,14 @@ jobs:
           $m = Invoke-RestMethod http://127.0.0.1:8801/api/models
           if (-not $m.default) { throw "no default detector registered in the built app" }
           Write-Host "default detector: $($m.default)"
+          # The cloud endpoint, with no key configured. It must answer rather than 500:
+          # this is the one call that proves cloud.py and remote.py both import inside the
+          # frozen bundle and their routes are registered. Everything past this point
+          # needs a RunPod account and real money, so it is as far as CI can go -- but an
+          # import error here would break the Settings screen for every user, key or not.
+          $c = Invoke-RestMethod http://127.0.0.1:8801/api/cloud
+          if ($null -eq $c.spend) { throw "/api/cloud answered without a spend block" }
+          Write-Host "cloud endpoint OK — configured=$($c.configured) limit=`$$($c.spend.limit_usd)"
           Write-Host "----- app log -----"; Get-Content app.out -ErrorAction SilentlyContinue
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 
