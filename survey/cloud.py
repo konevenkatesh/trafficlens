@@ -21,14 +21,11 @@ Nothing here is required. With no key configured the app behaves exactly as it d
 detecting locally, and every screen still works.
 """
 import json
-import os
-import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
 
 import db
 
@@ -44,6 +41,11 @@ UA = "TrafficLens/1.0 (+survey)"
 # one clip finishing and the next starting, short enough that a forgotten pod costs pennies
 # rather than a night's rent.
 IDLE_SECONDS = 300
+
+# The least a pod can usefully cost: image pull, boot, and one clip. A pod that cannot
+# pay for this out of what is left of the monthly limit is refused rather than started
+# and then killed a minute later, having spent money and produced nothing.
+MIN_RUN_SECONDS = 900
 
 SCHEMA = """
 -- One row per pod, written BEFORE the pod is created and updated as it lives and dies.
@@ -254,10 +256,23 @@ def may_start():
         return False, (f"this month's limit of ${s['limit_usd']:.2f} is used up "
                        f"(${s['month_usd']:.2f} spent). Raise it in Settings to continue.")
     st = status()
-    if st.get("ok") and (st.get("balance_usd") or 0) < 0.5:
-        return False, f"RunPod balance is ${st['balance_usd']:.2f} — top it up to continue"
     if not st.get("ok"):
         return False, st.get("error") or "cannot reach RunPod"
+    if (st.get("balance_usd") or 0) < 0.5:
+        return False, f"RunPod balance is ${st['balance_usd']:.2f} — top it up to continue"
+
+    # Enough headroom to be worth starting. "Not yet over the limit" is not the same as
+    # "can afford this": with $0.01 left and a $0.34/hr card, the old check said yes and
+    # the pod blew straight through the limit on its first minute. A pod that cannot pay
+    # for its own boot should never be created.
+    price = st.get("gpu_price") or 0
+    if price:
+        need = price * (MIN_RUN_SECONDS / 3600.0)
+        if s["remaining_usd"] < need:
+            return False, (f"only ${s['remaining_usd']:.2f} left of this month's "
+                           f"${s['limit_usd']:.2f} limit — a {cfg['gpu']} costs "
+                           f"${price:.2f}/hr and needs at least ${need:.2f} to be worth "
+                           f"starting. Raise the limit in Settings.")
     return True, None
 
 
@@ -286,9 +301,16 @@ def _watchdog():
             pods = live_pods()
             if not pods:
                 continue
+            # Two reasons to kill, and the second one matters more. Idle is waste; over
+            # the limit is the surveyor's stated ceiling being breached. The limit was
+            # only ever checked BEFORE a pod started, so a long survey could sail past it
+            # for hours -- the one thing the limit exists to prevent.
+            over = spend()["over_limit"]
             idle = time.time() - (_LAST_WORK[0] or time.time())
-            if idle < IDLE_SECONDS:
+            if not over and idle < IDLE_SECONDS:
                 continue
+            why = ("stopped: this month's spending limit was reached" if over
+                   else "stopped by the idle watchdog")
             for p in pods:
                 terminate(p["id"])
                 db.run("""INSERT INTO cloud_runs (pod_id,gpu,cost_per_hr,started,stopped,
@@ -297,7 +319,7 @@ def _watchdog():
                           WHERE NOT EXISTS (SELECT 1 FROM cloud_runs WHERE pod_id=?)""",
                        p["id"], p.get("name"), p["cost_per_hr"],
                        time.time() - p["uptime_s"], time.time(), p["uptime_s"],
-                       p["spent_so_far"], "stopped by the idle watchdog", p["id"])
+                       p["spent_so_far"], why, p["id"])
         except Exception:
             continue          # a watchdog that dies on a transient error is not a watchdog
 

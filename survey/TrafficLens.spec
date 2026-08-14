@@ -22,6 +22,11 @@ datas = [
     # and without it extraction dies on the first clip -- the cheapest possible way to
     # ship a build that installs perfectly and cannot count anything.
     (str(ROOT / "benchmark" / "bytetrack_low.yaml"), "benchmark"),
+    # agent.py is the code that runs on a rented GPU. It is READ, not imported -- its
+    # text is base64'd into the pod's start command -- so PyInstaller's import scan never
+    # sees it and would leave it out. Without this the .exe raises FileNotFoundError on
+    # the first cloud clip and nowhere else.
+    (str(ROOT / "survey" / "agent.py"), "."),
 ]
 
 # ffprobe AND ffmpeg. Windows has neither, and each absence breaks a different thing:
@@ -63,6 +68,10 @@ hiddenimports = [
     "aprdc_workbook", "attrspec", "dedup", "quality", "render",
     "verify", "report_card",
     "work", "api",
+    # Cloud detection. `remote` is imported inside a function in work.py so the app still
+    # runs with no key configured; that also puts it out of reach of a scan that only
+    # looks at module-level imports.
+    "cloud", "remote",
     "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on",
 ]

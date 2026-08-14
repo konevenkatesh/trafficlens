@@ -432,6 +432,17 @@ def worker_count():
       cuda  by VRAM, capped at 4 -- past that the returns are small and the risk of
             an out-of-memory failure mid-survey is not worth it
     """
+    # Cloud detection is one pod running one clip at a time: the agent refuses a second
+    # run with a 409, so a pool of three would fail two clips out of every three. The
+    # parallel gain that matters here is already banked -- a 4090 against a surveyor's
+    # processor is roughly twenty-five times, next to the 1.2x a second worker buys.
+    try:
+        import remote
+        if remote.in_use():
+            return 1
+    except Exception:
+        pass
+
     import engine
     dev = engine.device()
 
@@ -605,8 +616,22 @@ def _drain(slot):
                 import render
                 render.render(job["video_id"], jid)
             else:
-                engine.extract(job["video_id"], jid,
-                               model_id=job["model_id"] or default_model())
+                # Where this runs is a setting, not a code path: remote.extract has the
+                # same signature and writes the same tables, so everything downstream --
+                # the axle head, counting, review, the report -- is unchanged. If the
+                # cloud is switched off, unreachable or over its limit, remote.extract
+                # records the reason on the job and the surveyor is told; it does not
+                # silently fall back to a nine-times-slower local run they did not ask
+                # for and would not notice until tomorrow.
+                run = engine.extract
+                try:
+                    import remote
+                    if remote.in_use():
+                        run = remote.extract
+                except Exception:
+                    pass
+                run(job["video_id"], jid,
+                    model_id=job["model_id"] or default_model())
                 _axle(job["video_id"])
         except Exception as e:                      # one bad file must not stop the queue
             db.run("UPDATE jobs SET status='error', message=? WHERE id=?",
