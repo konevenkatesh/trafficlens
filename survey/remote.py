@@ -46,7 +46,17 @@ import db
 # debug. Its CUDA torch is already inside, so the pod installs nothing at boot.
 IMAGE = "ultralytics/ultralytics:8.4.114"
 AGENT_PORT = 8000
-BOOT_TIMEOUT = 600            # image pull on a cold machine is minutes, not seconds
+# How long to wait for a machine before writing it off, and how many to try. Measured:
+# a good host pulls the image and answers in about 115 seconds. One that has not answered
+# in five minutes is not slow, it is stuck -- and waiting ten minutes on it, as this first
+# did, costs twice as much and still fails. Cutting the wait and moving to another machine
+# turns a total loss into a retry that usually works.
+BOOT_TIMEOUT = 300
+BOOT_TRIES = 2
+# 4MB writes, not the 8KB urllib defaults to. See _put: the small chunks were costing
+# roughly an order of magnitude on upload, which is the whole cost model of this feature.
+CHUNK = 4 << 20
+UPLOAD_TIMEOUT = 7200         # a 1GB station recording on a bad line
 LOCK = threading.Lock()
 _POD = {}                     # the pod this process is using, if any
 
@@ -208,46 +218,88 @@ def ensure_pod(on_note=None):
             return None, why
 
         gpu = cloud.config()["gpu"]
-        if on_note:
-            on_note(f"renting a {gpu}…")
-        pod, err = _create(gpu, secrets.token_urlsafe(24))
-        if err:
-            return None, err
-        cloud.note_work()
-        ready, detail = _wait_ready(pod, on_note)
-        if not ready:
-            # Anything that cannot be used must not stay billing. This is the failure
-            # path most likely to leak money, so it terminates before it reports.
-            cloud.terminate(pod["id"])
-            return None, detail
-        pod["gpu_name"] = detail
-        _POD.clear()
-        _POD.update(pod)
-        db.run("UPDATE cloud_runs SET status='running' WHERE pod_id=?", pod["id"])
-        return _POD, None
+        detail = None
+        for attempt in range(1, BOOT_TRIES + 1):
+            if on_note:
+                on_note(f"renting a {gpu}…"
+                        + (f" (machine {attempt} of {BOOT_TRIES})" if attempt > 1 else ""))
+            pod, err = _create(gpu, secrets.token_urlsafe(24))
+            if err:
+                return None, err
+            cloud.note_work()
+            t0 = time.time()
+            ready, detail = _wait_ready(pod, on_note)
+            # Anything that cannot be used must not stay billing. This is the failure path
+            # most likely to leak money, so it terminates before it retries or reports.
+            if not ready:
+                cloud.terminate(pod["id"])
+                db.run("""UPDATE cloud_runs SET note = COALESCE(note,'')
+                            || ' · never came up' WHERE pod_id=?""", pod["id"])
+                continue
+            pod["gpu_name"] = detail
+            _POD.clear()
+            _POD.update(pod)
+            db.run("""UPDATE cloud_runs SET status='running',
+                        note = COALESCE(note,'') || ' · ready in ' || ? || 's'
+                      WHERE pod_id=?""", int(time.time() - t0), pod["id"])
+            return _POD, None
+        return None, (detail or "no machine came up")
 
 
 def _put(pod, rel, path, on_note=None):
     """Upload one file, skipping it if the pod already has it byte-for-byte.
 
-    The weights are the same 50MB on every clip of a survey. Sending them once per pod
+    The weights are the same 20MB on every clip of a survey. Sending them once per pod
     rather than once per clip is the difference between a minute of overhead and an hour
     of it across a station day.
+
+    Written against http.client rather than urllib for one reason: urllib streams a file
+    object in 8192-byte reads, one sendall per chunk. Over TLS to a pod on another
+    continent that measured 0.7 MB/s for a 36MB clip — 16 minutes per hour of footage,
+    which would have made the rented GPU slower end to end than the laptop it replaced.
+    Big chunks, and the caller finds out how it is going: a station recording is around
+    1GB, and an upload that reports nothing for ten minutes reads as a hang.
     """
+    import http.client
+
     seen = pod.setdefault("_sent", {})
     size = Path(path).stat().st_size
     if seen.get(rel) == size:
         return
-    if on_note:
-        on_note(f"sending {Path(path).name} ({size / 1e6:.0f} MB)…")
-    with open(path, "rb") as f:
-        req = urllib.request.Request(
-            _url(pod["id"]) + "/" + rel, data=f, method="PUT",
-            headers={"X-Token": pod["token"], "User-Agent": cloud.UA,
-                     "Content-Type": "application/octet-stream",
-                     "Content-Length": str(size)})
-        with urllib.request.urlopen(req, timeout=3600) as r:
-            json.loads(r.read() or b"{}")
+    name = Path(path).name
+    host = _url(pod["id"]).replace("https://", "")
+    conn = http.client.HTTPSConnection(host, timeout=UPLOAD_TIMEOUT, blocksize=CHUNK)
+    try:
+        conn.putrequest("PUT", "/" + rel, skip_accept_encoding=True)
+        conn.putheader("X-Token", pod["token"])
+        conn.putheader("User-Agent", cloud.UA)
+        conn.putheader("Content-Type", "application/octet-stream")
+        conn.putheader("Content-Length", str(size))
+        conn.endheaders()
+
+        sent, t0, last = 0, time.time(), 0.0
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(CHUNK)
+                if not chunk:
+                    break
+                conn.send(chunk)
+                sent += len(chunk)
+                now = time.time()
+                if on_note and (now - last > 3 or sent == size):
+                    last = now
+                    rate = sent / max(now - t0, 1e-6) / 1e6
+                    left = (size - sent) / 1e6 / max(rate, 1e-6)
+                    on_note(f"sending {name} — {sent / 1e6:.0f} of {size / 1e6:.0f} MB "
+                            f"at {rate:.1f} MB/s"
+                            + (f", {left / 60:.0f} min left" if left > 90 else ""))
+        r = conn.getresponse()
+        body = r.read()
+        if r.status != 200:
+            raise RuntimeError(f"upload of {name} failed: HTTP {r.status} "
+                               f"{body[:120].decode(errors='replace')}")
+    finally:
+        conn.close()
     seen[rel] = size
 
 

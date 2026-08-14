@@ -70,3 +70,8 @@ bin/
 # Past client deliverables. Not needed to build the app, and client material does not
 # belong in a build repo even a private one.
 delivery/
+
+# Downloaded release artifacts. The build lives on the GitHub release, not in git:
+# a 384MB installer is past GitHub's 100MB per-file limit, and a "git add -A" that
+# swept these in is what made two good commits unpushable.
+builds/
