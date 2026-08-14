@@ -49,13 +49,36 @@ jobs:
         # ffprobe the app cannot read a recording's duration or frame rate, so every file
         # looks unreadable. Without ffmpeg the annotated video cannot be encoded: OpenCV's
         # Windows build has no H.264 encoder (it asks for an openh264 DLL nobody has) and
-        # its mp4v fallback produces a file no browser will play. Both are vendored into
-        # the bundle rather than asking the surveyor to install anything.
+        # its mp4v fallback produces a file no browser will play.
+        #
+        # Two sources and three tries each, because one build already died here: gyan.dev
+        # answered 503 "temporarily not available due to a resource limitation" and took
+        # the whole run with it, twenty minutes before any of our own code was exercised.
+        # A release pipeline should not be one small website's bad afternoon away from
+        # failing, so the GitHub-hosted mirror is tried first.
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force vendor | Out-Null
-          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-          Invoke-WebRequest -UseBasicParsing $url -OutFile ff.zip
+          $sources = @(
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+            "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          )
+          $got = $false
+          foreach ($url in $sources) {
+            foreach ($try in 1..3) {
+              try {
+                Write-Host "fetching $url (attempt $try)"
+                Invoke-WebRequest -UseBasicParsing $url -OutFile ff.zip -TimeoutSec 300
+                $got = $true; break
+              } catch {
+                Write-Host "  failed: $($_.Exception.Message.Split([Environment]::NewLine)[0])"
+                Start-Sleep -Seconds (10 * $try)
+              }
+            }
+            if ($got) { break }
+          }
+          if (-not $got) { throw "could not download ffmpeg from any source" }
+          Remove-Item -Recurse -Force fftmp -ErrorAction SilentlyContinue
           Expand-Archive ff.zip -DestinationPath fftmp
           foreach ($n in "ffprobe.exe", "ffmpeg.exe") {
             $f = Get-ChildItem fftmp -Recurse -Filter $n | Select-Object -First 1
