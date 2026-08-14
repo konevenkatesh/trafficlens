@@ -125,6 +125,7 @@ async function viewStations() {
 /* ─────────────────────────── one station ─────────────────────────── */
 async function viewStation(id) {
   const d = await api(`/api/stations/${id}`);
+  if (viewStation._for !== id) { PICKED.clear(); viewStation._for = id; }
   const p = d.progress, hrs = d.hours;
   const nextIdx = p.steps.findIndex(s => !s.done);
   const q = d.queue || {};
@@ -338,47 +339,102 @@ function openLine(id, lines) {
 let ED = null;
 
 /* ── step 3: the hours ── */
+/* Hours are SELECTED, not started. Clicking a tile used to send that hour straight to
+   the detector -- a misclick began work that costs an hour of machine time, and with a
+   rented GPU it also began spending money. Now clicking chooses, and one Run button
+   starts what has been chosen. The set lives outside the render so a poll redrawing the
+   grid does not lose the selection mid-choice. */
+let PICKED = new Set();
+
 function paintHours(id, d) {
   const el = $('#stepHours');
   const q = d.queue || {};
   const busyId = q.running ? q.running.video_id : null;
   const waiting = new Set((q.waiting || []).map(w => w.video_id));
+  const speed = d.device.speed || 1;
+
+  const stateOf = h => h.files.some(f => f.video_id === busyId || waiting.has(f.video_id))
+    ? 'busy' : h.state;
+  // An hour that finished or is already working cannot be picked, so a stale tick from
+  // before it started must not survive into the Run.
+  d.hours.forEach(h => { if (stateOf(h) !== 'todo' && stateOf(h) !== 'part') PICKED.delete(h.hour); });
+
+  const pickable = d.hours.filter(h => ['todo', 'part'].includes(stateOf(h)));
+  const chosen = pickable.filter(h => PICKED.has(h.hour));
+  const mn = chosen.reduce((a, h) => a + h.minutes, 0);
 
   el.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="card-body">
     <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
       <h2 style="margin:0;font-size:17px">Footage by hour</h2>
-      <span class="muted-sm" style="flex:1">Pick an hour to detect vehicles in it.</span>
-      ${d.remaining_estimate_s ? `<span class="muted-sm">all remaining ≈
-        ${mins(d.remaining_estimate_s)}</span>` : ''}
+      <span class="muted-sm" style="flex:1">Tick the hours you want, then press Run.
+        Nothing starts on its own.</span>
+      ${pickable.length ? `<button class="btn sm ghost" id="pickAll">${
+        chosen.length === pickable.length ? 'Clear all' : 'Select all'}</button>` : ''}
     </div>
     <div id="qbar"></div>
     <div class="hours" style="margin-top:12px">${d.hours.map(h => {
-      const state = h.files.some(f => f.video_id === busyId) ? 'busy'
-        : h.files.some(f => waiting.has(f.video_id)) ? 'busy' : h.state;
+      const state = stateOf(h);
+      const on = PICKED.has(h.hour);
       const pct = h.total ? Math.round(100 * h.extracted / h.total) : 0;
       return `<button class="hr ${state === 'done' ? 'done' : ''}
-                ${state === 'busy' ? 'busy' : ''}" data-hour="${esc(h.hour)}"
+                ${state === 'busy' ? 'busy' : ''} ${on ? 'picked' : ''}"
+                data-hour="${esc(h.hour)}"
                 ${state === 'done' || state === 'busy' ? 'disabled' : ''}>
-        <div class="t">${esc(h.label)}${h.night ? '<span class="night">night</span>' : ''}</div>
+        <div class="t">${on ? '<span class="tick">✓</span> ' : ''}${esc(h.label)}${
+          h.night ? '<span class="night">night</span>' : ''}</div>
         <div class="d">${h.minutes} min filmed${h.coverage < 0.99
           ? ` · ${Math.round(h.coverage * 100)}% of the hour` : ''}</div>
         <div class="bar"><i style="width:${pct}%"></i></div>
         <div class="cta">${state === 'done' ? '✓ done'
           : state === 'busy' ? 'working…'
+          : on ? 'selected'
           : state === 'part' ? `finish (${h.total - h.extracted} left)`
-          : `detect · ≈${mins(h.minutes * 60 / (d.device.speed || 1))}`}</div>
+          : `≈${mins(h.minutes * 60 / speed)}`}</div>
       </button>`;
     }).join('')}</div>
+
+    ${chosen.length ? `<div class="runbar">
+      <div style="flex:1"><b>${chosen.length} hour${chosen.length > 1 ? 's' : ''} selected</b>
+        <span class="muted-sm">${mn} min of footage · about ${mins(mn * 60 / speed)}${
+          d.device.cloud ? ' on a rented GPU, which costs money' : ''}</span></div>
+      <button class="btn ghost sm" id="pickNone">Clear</button>
+      <button class="btn primary" id="runPicked">Run ${chosen.length} hour${
+        chosen.length > 1 ? 's' : ''}</button>
+    </div>` : ''}
   </div></div>`;
 
-  el.querySelectorAll('[data-hour]').forEach(b => b.onclick = async () => {
-    b.disabled = true;
-    try {
-      await api(`/api/stations/${id}/hours/${encodeURIComponent(b.dataset.hour)}/extract`, {});
-      toast('Started — you can leave this running');
-      viewStation(id);
-    } catch (e) { toast(e.message, true); b.disabled = false; }
+  el.querySelectorAll('[data-hour]').forEach(b => b.onclick = () => {
+    const h = b.dataset.hour;
+    PICKED.has(h) ? PICKED.delete(h) : PICKED.add(h);
+    paintHours(id, d);                     // selection only — nothing is sent
   });
+  const all = $('#pickAll');
+  if (all) all.onclick = () => {
+    if (chosen.length === pickable.length) PICKED.clear();
+    else pickable.forEach(h => PICKED.add(h.hour));
+    paintHours(id, d);
+  };
+  const none = $('#pickNone');
+  if (none) none.onclick = () => { PICKED.clear(); paintHours(id, d); };
+
+  const run = $('#runPicked');
+  if (run) run.onclick = async () => {
+    run.disabled = true; run.textContent = 'Starting…';
+    const hours = chosen.map(h => h.hour);
+    try {
+      // Sequentially, so a rejection names the hour it belongs to rather than failing
+      // the whole batch anonymously.
+      for (const h of hours) {
+        await api(`/api/stations/${id}/hours/${encodeURIComponent(h)}/extract`, {});
+      }
+      PICKED.clear();
+      toast(`Started ${hours.length} hour${hours.length > 1 ? 's' : ''} — you can leave this running`);
+      viewStation(id);
+    } catch (e) {
+      toast(e.message, true);
+      run.disabled = false; run.textContent = `Run ${hours.length} hours`;
+    }
+  };
   paintQueue(d.queue);
 }
 

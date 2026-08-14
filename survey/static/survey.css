@@ -131,3 +131,13 @@
        cursor: pointer; user-select: none; }
 .chk input { width: 16px; height: 16px; accent-color: var(--cc-acc); cursor: pointer; }
 .field.sm { height: 34px; padding: 0 10px; font-size: 13px; }
+
+/* A selected hour has to be obvious from across a desk, because pressing Run commits
+   machine time and, on a rented GPU, money. Border alone was not enough on the tiles
+   that already carry a state colour. */
+.hr.picked { border-color: var(--cc-acc); background: var(--cc-acc-bg);
+             box-shadow: 0 0 0 2px var(--cc-acc-bg); }
+.hr.picked .cta { color: var(--cc-acc); font-weight: 650; }
+.hr .tick { color: var(--cc-acc); }
+.runbar { display: flex; align-items: center; gap: 12px; margin-top: 14px;
+          padding-top: 14px; border-top: 1px solid var(--cc-line); }
