@@ -53,8 +53,10 @@ AGENT_PORT = 8000
 # turns a total loss into a retry that usually works.
 BOOT_TIMEOUT = 300
 BOOT_TRIES = 2
-# 4MB writes, not the 8KB urllib defaults to. See _put: the small chunks were costing
-# roughly an order of magnitude on upload, which is the whole cost model of this feature.
+# 4MB writes rather than the 8KB urllib defaults to. This was changed on the theory that
+# the small chunks were throttling upload; measured on one pod, both ways, same file, it
+# makes no difference at all — 2.68 MB/s against 2.64 MB/s. Kept because streaming by hand
+# is what makes progress reporting and a real error message possible, not for speed.
 CHUNK = 4 << 20
 UPLOAD_TIMEOUT = 7200         # a 1GB station recording on a bad line
 LOCK = threading.Lock()
@@ -253,12 +255,18 @@ def _put(pod, rel, path, on_note=None):
     rather than once per clip is the difference between a minute of overhead and an hour
     of it across a station day.
 
-    Written against http.client rather than urllib for one reason: urllib streams a file
-    object in 8192-byte reads, one sendall per chunk. Over TLS to a pod on another
-    continent that measured 0.7 MB/s for a 36MB clip — 16 minutes per hour of footage,
-    which would have made the rented GPU slower end to end than the laptop it replaced.
-    Big chunks, and the caller finds out how it is going: a station recording is around
-    1GB, and an upload that reports nothing for ten minutes reads as a hang.
+    Written against http.client rather than urllib so the upload can be streamed by hand:
+    the caller gets a running rate and an honest error. A station recording is around 1GB,
+    and an upload that reports nothing for ten minutes reads as a hang.
+
+    NOT for throughput, though that is why it was first written. urllib sends a file object
+    in 8192-byte reads and one pod measured 0.7 MB/s, so the small writes looked like the
+    cause. Measured properly — same file, same pod, both ways — 4MB chunks gave 2.68 MB/s
+    and 8KB gave 2.64 MB/s. The chunk size is irrelevant; what varies is the machine.
+    Across pods the same upload ran between 0.7 and 2.7 MB/s, roughly 4x, which is 4 to 16
+    minutes per hour of footage at ~676MB an hour. On a good pod that is about level with
+    detection (~3 min per hour of footage on a 4090); on a bad one, upload is the whole
+    cost. The fix worth making next is overlapping the two, not making the bytes faster.
     """
     import http.client
 
