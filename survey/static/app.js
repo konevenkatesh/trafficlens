@@ -99,7 +99,7 @@ async function viewStations() {
         padding:40px;color:var(--cc-fg-3)">No stations yet. Create one above to start.</div></div>`}
 
     <p class="muted-sm" style="margin-top:20px">Running on ${esc(dev.name)} ·
-      <a href="#settings">Settings</a></p>
+      <a href="#settings">Settings</a> · <span id="ver">…</span></p>
   </div>`;
 
   const go = async () => {
@@ -112,6 +112,14 @@ async function viewStations() {
   };
   $('#add').onclick = go;
   $('#nm').onkeydown = e => { if (e.key === 'Enter') go(); };
+  // Printed on the first screen, not hidden behind a menu. "I installed it and none of
+  // the changes are there" is unanswerable without it, and the answer turned out to be
+  // three different possible faults.
+  api('/api/version', undefined, 'GET').then(v => {
+    const el = $('#ver');
+    if (el) el.textContent = `build ${v.build}` + (v.commit && v.commit !== 'source'
+      ? ` (${String(v.commit).slice(0, 7)})` : '');
+  }).catch(() => {});
 }
 
 /* ─────────────────────────── one station ─────────────────────────── */

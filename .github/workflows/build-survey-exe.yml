@@ -87,6 +87,16 @@ jobs:
             Write-Host ("vendored {0}  {1:N0} MB" -f $n, ($f.Length/1MB))
           }
 
+      - name: Stamp the build
+        shell: bash
+        run: |
+          cat > survey/buildinfo.py <<EOF
+          COMMIT = "${{ github.sha }}"
+          BUILD = "1.0.${{ github.run_number }}"
+          BUILT = "$(date -u +%Y-%m-%dT%H:%MZ)"
+          EOF
+          cat survey/buildinfo.py
+
       - name: Check the app imports before freezing it
         # A missing import found here costs 30 seconds; found after a 20-minute freeze it
         # costs the whole build.
@@ -174,6 +184,13 @@ jobs:
           $c = Invoke-RestMethod http://127.0.0.1:8801/api/cloud
           if ($null -eq $c.spend) { throw "/api/cloud answered without a spend block" }
           Write-Host "cloud endpoint OK — configured=$($c.configured) limit=`$$($c.spend.limit_usd)"
+          # The build must know which build it is, or "the changes are not there" cannot
+          # be diagnosed on a machine we cannot see.
+          $v = Invoke-RestMethod http://127.0.0.1:8801/api/version
+          if ($v.build -eq "development" -or $v.build -eq "unknown") {
+            throw "the frozen app does not know its own build number"
+          }
+          Write-Host "build stamp: $($v.build) $($v.commit)"
           Write-Host "----- app log -----"; Get-Content app.out -ErrorAction SilentlyContinue
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 

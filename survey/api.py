@@ -51,9 +51,25 @@ OUT = Path(os.environ.get("TRAFFICLENS_DATA") or ROOT) / "reports"
 @app.middleware("http")
 async def no_cache(request, call_next):
     resp = await call_next(request)
-    if request.url.path.startswith(("/api/", "/static/")):
+    # /shared/ too, not just /static/. ui.css lives there, so a browser that had cached
+    # it kept rendering an old app after an upgrade -- which looks exactly like the new
+    # build never installed.
+    if request.url.path.startswith(("/api/", "/static/", "/shared/")):
         resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Pragma"] = "no-cache"
     return resp
+
+
+@app.get("/api/version")
+def version():
+    """Which build this actually is. The first question after any "I don't see the
+    changes", and it used to be unanswerable."""
+    try:
+        import buildinfo
+        return {"build": buildinfo.BUILD, "commit": buildinfo.COMMIT,
+                "built": buildinfo.BUILT}
+    except Exception:
+        return {"build": "unknown", "commit": "unknown", "built": ""}
 
 
 @app.get("/api/health")

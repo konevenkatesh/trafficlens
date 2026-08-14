@@ -35,6 +35,14 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; ~2GB of torch and weights: say so before they start, not after.
 DiskSpanning=no
+; Shut the app down before replacing its files. Without this Inno cannot overwrite a
+; running TrafficLens.exe and quietly keeps the old one -- the installer reports success,
+; the surveyor reopens the app, and none of the new work is there. That is exactly what a
+; wrong-build report looks like, and it is indistinguishable from a failed build unless
+; the app can state its own version, which it now does on the first screen.
+CloseApplications=yes
+CloseApplicationsFilter=*.exe
+RestartApplications=no
 UninstallDisplayName={#AppName}
 
 [Languages]
