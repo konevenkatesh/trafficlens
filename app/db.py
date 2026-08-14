@@ -94,6 +94,9 @@ MIGRATIONS = [
     # own head overrides it, only for itself.
     ("lab_attr_models", "site_id", "INTEGER"),
     ("lab_attr_promotions", "site_id", "INTEGER"),
+    # Two lines and the measured distance between them. On the site, not the video: the
+    # camera does not move between clips, so measuring the road once covers the station.
+    ("sites", "speed_trap", "TEXT"),
 ] + GEO_COLS
 
 

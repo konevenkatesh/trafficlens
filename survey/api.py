@@ -475,6 +475,39 @@ def cloud_runs(limit: int = 30):
             "spend": cloud.spend()}
 
 
+# ───────────────────────────── speed ─────────────────────────────
+class TrapIn(BaseModel):
+    a: dict | None = None
+    b: dict | None = None
+    metres: float | None = None
+
+
+@app.get("/api/stations/{site_id}/speed")
+def speed_get(site_id: int):
+    """The trap, and every reading it has produced so far."""
+    import speed
+    trap = speed.trap_for(site_id)
+    if not trap:
+        return {"trap": None, "summary": {"n": 0}}
+    rows, fps = [], None
+    for v in db.rows("""SELECT id, fps FROM videos WHERE site_id=?
+                        AND COALESCE(excluded,0)=0""", site_id):
+        rows.extend(speed.speeds_for(v["id"], trap))
+        fps = fps or v["fps"]
+    return {"trap": trap, "summary": speed.summary(rows),
+            "accuracy": speed.accuracy_note(trap, fps or 12)}
+
+
+@app.post("/api/stations/{site_id}/speed")
+def speed_set(site_id: int, body: TrapIn):
+    import speed
+    try:
+        speed.save_trap(site_id, body.a, body.b, body.metres)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return speed_get(site_id)
+
+
 # ───────────────────────────── annotated video ─────────────────────────────
 def _render_path(video_id):
     """Where this recording's annotated video actually is.
