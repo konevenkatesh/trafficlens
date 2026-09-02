@@ -52,7 +52,13 @@ AGENT_PORT = 8000
 # did, costs twice as much and still fails. Cutting the wait and moving to another machine
 # turns a total loss into a retry that usually works.
 BOOT_TIMEOUT = 300
-BOOT_TRIES = 2
+# Three machines, not two. RunPod hosts fail often enough that this is not pessimism:
+# across testing only one pod in five came up first try, one answered with no usable GPU,
+# and one sat in a container-start crash loop with a dead NVIDIA driver on the host
+# ("nvidia-container-cli: detection error: nvml error"). None of those are anything the
+# app can fix or the surveyor can influence -- the only remedy is another machine, and a
+# failed attempt costs about two cents.
+BOOT_TRIES = 3
 # 4MB writes rather than the 8KB urllib defaults to. This was changed on the theory that
 # the small chunks were throttling upload; measured on one pod, both ways, same file, it
 # makes no difference at all — 2.68 MB/s against 2.64 MB/s. Kept because streaming by hand
@@ -186,11 +192,39 @@ def _gql_retry(q, args, tries=3):
     return None, err
 
 
+def _pod_state(pod_id):
+    """RunPod's own view of the pod: status, and whether the container ever started."""
+    d, err = cloud._gql("""query { myself { pods { id desiredStatus
+                                     runtime { uptimeInSeconds } } } }""")
+    if err:
+        return None, None
+    for p in ((d or {}).get("myself") or {}).get("pods") or []:
+        if p["id"] == pod_id:
+            return p.get("desiredStatus"), (p.get("runtime") or {}).get("uptimeInSeconds")
+    return "GONE", None
+
+
 def _wait_ready(pod, on_note=None):
-    """Block until the agent answers, or give up with a reason a person can act on."""
+    """Block until the agent answers, or give up with a reason a person can act on.
+
+    Watches RunPod's status as well as the agent, because the most common failure does not
+    look like slowness. A host with a broken NVIDIA driver accepts the rental, reports
+    RUNNING, and then loops forever on "error starting container ... nvml error" -- the
+    container never runs, so /health never answers and the full timeout is spent waiting
+    for something that cannot happen. A pod that has stopped or vanished is hopeless
+    immediately, and saying so early is both cheaper and clearer than a timeout.
+    """
     t0 = time.time()
     last = None
+    checked = 0.0
     while time.time() - t0 < BOOT_TIMEOUT:
+        if time.time() - checked > 30:
+            checked = time.time()
+            state, _up = _pod_state(pod["id"])
+            if state in ("EXITED", "TERMINATED", "DEAD", "GONE"):
+                return False, (f"the rented machine stopped before it could start "
+                               f"(RunPod reported {state.lower()}). This is a fault on "
+                               f"their host, not with your key or this app.")
         try:
             req = urllib.request.Request(_url(pod["id"]) + "/health",
                                          headers={"User-Agent": cloud.UA})
@@ -205,8 +239,10 @@ def _wait_ready(pod, on_note=None):
         if on_note:
             on_note(f"starting the GPU… {int(time.time() - t0)}s")
         time.sleep(6)
-    return False, (f"the rented machine did not come up within "
-                   f"{BOOT_TIMEOUT // 60} minutes ({last})")
+    return False, (f"the rented machine did not answer within "
+                   f"{BOOT_TIMEOUT // 60} minutes ({last}). Usually a bad host — "
+                   f"a broken GPU driver there will loop on 'error starting container' "
+                   f"where nothing this app does can help.")
 
 
 def ensure_pod(on_note=None):
@@ -252,7 +288,10 @@ def ensure_pod(on_note=None):
                         note = COALESCE(note,'') || ' · ready in ' || ? || 's'
                       WHERE pod_id=?""", int(time.time() - t0), pod["id"])
             return _POD, None
-        return None, (detail or "no machine came up")
+        return None, ((detail or "no machine came up")
+                      + f" Tried {BOOT_TRIES} machines. RunPod capacity and host health "
+                        f"vary hour to hour; waiting a few minutes and starting again "
+                        f"usually lands on a working one.")
 
 
 def _put(pod, rel, path, on_note=None):
