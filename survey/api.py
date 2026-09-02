@@ -157,7 +157,12 @@ def station(site_id: int):
                        WHERE v.site_id=? AND j.kind='extract' AND j.status='error'
                          AND NOT EXISTS (SELECT 1 FROM tracks t WHERE t.video_id=j.video_id)
                        ORDER BY j.id DESC LIMIT 10""", site_id)
-    return {"station": {"id": s["id"], "code": s["code"], "name": s["name"]},
+    # How many recordings sit on a guessed time. The screen has always had code to warn
+    # about this and it never once fired, because nothing ever sent the field -- so
+    # footage filmed at night and filed at its copy time looked entirely normal, and the
+    # first sign of trouble was an hourly report for hours that were never filmed.
+    guessed = work.clock_report(site_id)["guessed"]
+    return {"guessed": guessed, "station": {"id": s["id"], "code": s["code"], "name": s["name"]},
             "progress": _progress(site_id),
             "hours": hrs,
             "line": db.jload(s["default_line"], []),
@@ -473,6 +478,29 @@ def cloud_runs(limit: int = 30):
                                       usd,status,clips,note
                                FROM cloud_runs ORDER BY id DESC LIMIT ?""", limit),
             "spend": cloud.spend()}
+
+
+# ───────────────────────────── the clock ─────────────────────────────
+class ClockIn(BaseModel):
+    video_id: int
+    clock: str
+    shift_others: bool = True
+
+
+@app.get("/api/stations/{site_id}/clock")
+def clock_get(site_id: int):
+    """Every recording, its start time, and whether that time is trustworthy."""
+    return work.clock_report(site_id)
+
+
+@app.post("/api/stations/{site_id}/clock")
+def clock_set(site_id: int, body: ClockIn):
+    """Correct a start time. Everything downstream is rebuilt from it on the next read."""
+    try:
+        r = work.set_clock(body.video_id, body.clock, body.shift_others)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {**r, **work.clock_report(site_id), "hours": work.hours(site_id)}
 
 
 # ───────────────────────────── speed ─────────────────────────────

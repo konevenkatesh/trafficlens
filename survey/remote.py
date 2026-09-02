@@ -51,7 +51,15 @@ AGENT_PORT = 8000
 # in five minutes is not slow, it is stuck -- and waiting ten minutes on it, as this first
 # did, costs twice as much and still fails. Cutting the wait and moving to another machine
 # turns a total loss into a retry that usually works.
-BOOT_TIMEOUT = 300
+# Ten minutes, raised from five. Five was tuned on the only two hosts that had worked at
+# the time, both of which answered in about 115 seconds -- so it looked like a 2.6x margin
+# and was really a sample of two. Hosts that then took longer were abandoned mid-download
+# and the work thrown away. A pod pulling a 4.6GB image and a pod crash-looping on a dead
+# driver are indistinguishable through the API (both RUNNING, both uptime 0), so there is
+# no clever signal to wait for -- only the choice of how long to give it. At $0.34/hr the
+# extra five minutes costs under three cents on a host that was never going to work, and
+# saves a whole retry cycle on one that was.
+BOOT_TIMEOUT = 600
 # Three machines, not two. RunPod hosts fail often enough that this is not pessimism:
 # across testing only one pod in five came up first try, one answered with no usable GPU,
 # and one sat in a container-start crash loop with a dead NVIDIA driver on the host
@@ -237,7 +245,20 @@ def _wait_ready(pod, on_note=None):
         except Exception as e:
             last = type(e).__name__
         if on_note:
-            on_note(f"starting the GPU… {int(time.time() - t0)}s")
+            # Say what is happening, not just that time is passing. Almost all of this
+            # wait is one 4.6GB image download onto a machine that has never run it, which
+            # is normal and unavoidable -- but "starting the GPU… 87s" with no explanation
+            # looks identical to a hang, and the surveyor cannot tell a working machine
+            # from a broken one. Measured: a good host answers in about 115 seconds.
+            el = int(time.time() - t0)
+            if el < 45:
+                on_note(f"renting a machine… {el}s")
+            elif el < 150:
+                on_note(f"downloading the detector onto it, 4.6 GB — "
+                        f"normal on a new machine ({el}s)")
+            else:
+                on_note(f"still starting after {el}s — slower than the usual 2 minutes. "
+                        f"Will try another machine if it does not answer.")
         time.sleep(6)
     return False, (f"the rented machine did not answer within "
                    f"{BOOT_TIMEOUT // 60} minutes ({last}). Usually a bad host — "

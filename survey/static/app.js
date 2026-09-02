@@ -181,12 +181,26 @@ function paintFolder(id, d) {
       style="display:flex;align-items:center;gap:14px">
       <div style="flex:1"><b>${p.files} recording(s)</b>
         <div class="muted-sm" style="font-family:ui-monospace,monospace">${esc(p.folder)}</div>
-        ${d.guessed ? `<div class="muted-sm" style="color:var(--cc-warn-fg)">
-          ${d.guessed} of them had no date in the filename — the file's own timestamp was
-          used, which is often the copy time. Check the hours below look right.</div>` : ''}</div>
+        </div>
       <button class="btn ghost" id="reFolder">Check for new files</button>
       <button class="btn ghost" id="chFolder">Change folder</button>
-    </div></div>`;
+    </div></div>
+
+    ${/* A guessed clock is not a cosmetic problem. Every hour, every 15-minute bin and
+          the whole proforma is built from it, so night footage filed at 16:00 produces a
+          report that is wrong in a way no amount of reviewing can find. This used to be a
+          grey footnote with nothing to click. */''}
+    ${d.guessed ? `<div class="card" style="margin-bottom:14px;border-color:var(--cc-warn)">
+      <div class="card-body" style="display:flex;align-items:center;gap:14px">
+        <div style="flex:1"><b>${d.guessed} recording(s) have a guessed time</b>
+          <div class="muted-sm">There was no date in the filename, so the file's own
+            timestamp was used — usually when it was copied, not when it was filmed. Every
+            hour and the whole report is built from this, so if the times below are wrong,
+            the report will be too.</div></div>
+        <button class="btn primary" id="fixClock">Set the real time</button>
+      </div></div>` : ''}`;
+    const fc = $('#fixClock');
+    if (fc) fc.onclick = () => openClock(id);
     $('#reFolder').onclick = async e => {
       e.target.disabled = true; e.target.textContent = 'Checking…';
       try {
@@ -309,6 +323,45 @@ function paintLine(id, d) {
       ${has ? 'Redraw' : 'Draw the line'}</button>
   </div></div>`;
   $('#drawLine').onclick = () => openLine(id, d.line || []);
+}
+
+/* ── correcting the clock ── */
+async function openClock(id) {
+  const d = await api(`/api/stations/${id}/clock`, undefined, 'GET');
+  const rs = d.recordings || [];
+  const first = rs[0] || {};
+  modal('Set the real start time', `
+    <p class="muted-sm" style="margin:0 0 10px">Play the first recording and read the time
+      off it — most cameras burn it into the picture. Type that below. The other
+      recordings move by the same amount, so the gaps between them stay right.</p>
+    <p class="muted-sm" style="margin:0 0 12px">Recordings whose time came from the
+      <b>filename</b> are left alone — that one is reliable.</p>
+    <label class="lbl">Real start time of <b>${esc(first.name || '')}</b></label>
+    <input class="field sm" id="ckVal" style="max-width:260px;margin:6px 0 4px"
+           value="${esc((first.clock || '').slice(0, 19))}" placeholder="2026-09-02 21:30:00">
+    <p class="muted-sm" style="margin:0 0 14px">Format: YYYY-MM-DD HH:MM:SS (24 hour)</p>
+    <table><thead><tr><th>Recording</th><th>Currently</th><th class="right">Minutes</th>
+      <th>Time came from</th></tr></thead><tbody>
+      ${rs.map(r => `<tr>
+        <td>${esc(r.name)}</td>
+        <td class="mono">${esc((r.clock || '—').slice(0, 16))}</td>
+        <td class="right num">${r.minutes}</td>
+        <td>${r.source === 'filename' || r.source === 'manual'
+          ? `<span class="status ok">${esc(r.source)}</span>`
+          : `<span class="status warn">${esc(r.source)} — a guess</span>`}</td></tr>`).join('')}
+    </tbody></table>`,
+    [{ label: 'Save', primary: true, act: async () => {
+        const v = $('#ckVal').value.trim();
+        if (!first.video_id) return toast('No recording to set', true);
+        try {
+          const r = await api(`/api/stations/${id}/clock`,
+            { video_id: first.video_id, clock: v, shift_others: true });
+          closeModal();
+          toast(`Time set — ${r.moved} recording(s) moved by ${
+            Math.round(r.shift_seconds / 60)} min`);
+          viewStation(id);
+        } catch (e) { toast(e.message, true); }
+      } }], 'wide');
 }
 
 /* ── speed: two lines and a tape measure ── */

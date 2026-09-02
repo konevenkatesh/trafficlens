@@ -330,6 +330,69 @@ def _dur_s(v):
     return 0.0
 
 
+def set_clock(video_id, clock, shift_others=True):
+    """Correct the start time of a recording, and by default move the rest with it.
+
+    Needed because a guessed clock is not a cosmetic problem: every hour, every 15-minute
+    bin and the whole proforma is built from it. Footage recorded at night and filed at
+    16:00 produces a report that is wrong in a way no amount of reviewing can find, and
+    until now there was no way to fix it -- the app printed a warning and left it there.
+
+    Recordings from one camera are sequential, so correcting the first one usually
+    corrects all of them: the same offset is applied to the others, which preserves the
+    real gaps between files rather than stacking them onto one time. Recordings whose
+    clock came from the FILENAME are never shifted -- that one is authoritative, and a
+    surveyor fixing an undated file should not silently move the dated ones.
+    """
+    v = db.one("SELECT id, site_id, start_clock FROM videos WHERE id=?", video_id)
+    if not v:
+        raise ValueError("no such recording")
+    try:
+        new = datetime.strptime(clock.strip()[:19], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, AttributeError):
+        raise ValueError("give the time as YYYY-MM-DD HH:MM:SS")
+
+    delta = None
+    if v["start_clock"]:
+        try:
+            delta = new - datetime.strptime(v["start_clock"][:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            delta = None
+
+    db.run("UPDATE videos SET start_clock=?, clock_source='manual' WHERE id=?",
+           new.strftime("%Y-%m-%d %H:%M:%S"), video_id)
+    moved = 1
+    if shift_others and delta is not None and delta.total_seconds():
+        for o in db.rows("""SELECT id, start_clock FROM videos
+                            WHERE site_id=? AND id<>? AND start_clock IS NOT NULL
+                              AND COALESCE(clock_source,'') <> 'filename'""",
+                         v["site_id"], video_id):
+            try:
+                t = datetime.strptime(o["start_clock"][:19], "%Y-%m-%d %H:%M:%S") + delta
+            except ValueError:
+                continue
+            db.run("UPDATE videos SET start_clock=?, clock_source='manual' WHERE id=?",
+                   t.strftime("%Y-%m-%d %H:%M:%S"), o["id"])
+            moved += 1
+    return {"video_id": video_id, "clock": new.strftime("%Y-%m-%d %H:%M:%S"),
+            "moved": moved,
+            "shift_seconds": int(delta.total_seconds()) if delta else 0}
+
+
+def clock_report(site_id):
+    """Every recording with its time and where that time came from."""
+    rows = db.rows("""SELECT id, name, start_clock, clock_source, frames, fps
+                      FROM videos WHERE site_id=? AND COALESCE(excluded,0)=0
+                      ORDER BY start_clock, id""", site_id)
+    out = []
+    for r in rows:
+        out.append({"video_id": r["id"], "name": r["name"],
+                    "clock": r["start_clock"], "source": r["clock_source"] or "assumed",
+                    "minutes": round(_dur_s(r) / 60.0, 1)})
+    return {"recordings": out,
+            "guessed": sum(1 for r in out if r["source"] not in ("filename", "manual"))}
+
+
 def hours(site_id):
     """The footage laid out as clock hours -- the unit the surveyor works in.
 
