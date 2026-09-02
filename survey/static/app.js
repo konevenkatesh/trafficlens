@@ -331,9 +331,18 @@ async function openClock(id) {
   const rs = d.recordings || [];
   const first = rs[0] || {};
   modal('Set the real start time', `
-    <p class="muted-sm" style="margin:0 0 10px">Play the first recording and read the time
-      off it — most cameras burn it into the picture. Type that below. The other
-      recordings move by the same amount, so the gaps between them stay right.</p>
+    <p class="muted-sm" style="margin:0 0 10px">Most cameras print the time into the
+      picture. Read it off the frame below and type it in — that is the one clock nothing
+      can get wrong. The other recordings move by the same amount, so the gaps between
+      them stay right.</p>
+    ${/* The frame is shown rather than described. Asking somebody to go and open the
+          video in another program to read a number, then come back, is how a correction
+          step gets skipped and a whole survey ships under the wrong hours. */''}
+    <div style="border:1px solid var(--cc-line);border-radius:var(--cc-r-md);
+                overflow:hidden;margin:0 0 12px;background:#000">
+      <img src="/api/stations/${id}/frame?at=0.02" alt="first frame"
+           style="width:100%;display:block">
+    </div>
     <p class="muted-sm" style="margin:0 0 12px">Recordings whose time came from the
       <b>filename</b> are left alone — that one is reliable.</p>
     <label class="lbl">Real start time of <b>${esc(first.name || '')}</b></label>
@@ -505,6 +514,17 @@ function paintHours(id, d) {
   const pickable = d.hours.filter(h => ['todo', 'part'].includes(stateOf(h)));
   const chosen = pickable.filter(h => PICKED.has(h.hour));
   const mn = chosen.reduce((a, h) => a + h.minutes, 0);
+  // What will actually be decoded: whole files, each counted once. Detection never
+  // processes part of a recording, so a 3-hour file selected in one hour costs three
+  // hours of work. Adding up the per-hour coverage told the surveyor otherwise.
+  const seenV = new Set();
+  let workMin = 0, longFiles = [];
+  chosen.forEach(h => (h.files || []).forEach(f => {
+    if (f.tracks || seenV.has(f.video_id)) return;
+    seenV.add(f.video_id);
+    workMin += (f.file_seconds || f.seconds_here || 0) / 60;
+    if ((f.spans_hours || 1) > 1) longFiles.push(f);
+  }));
 
   el.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="card-body">
     <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
@@ -538,8 +558,13 @@ function paintHours(id, d) {
 
     ${chosen.length ? `<div class="runbar">
       <div style="flex:1"><b>${chosen.length} hour${chosen.length > 1 ? 's' : ''} selected</b>
-        <span class="muted-sm">${mn} min of footage · about ${mins(mn * 60 / speed)}${
-          d.device.cloud ? ' on a rented GPU, which costs money' : ''}</span></div>
+        <span class="muted-sm">${Math.round(workMin)} min of footage · about ${
+          mins(workMin * 60 / speed)}${
+          d.device.cloud ? ' on a rented GPU, which costs money' : ''}</span>
+        ${longFiles.length ? `<div class="muted-sm" style="color:var(--cc-warn-fg)">
+          ${longFiles.length} of these recording(s) run longer than an hour — the whole
+          file is processed, not just the part inside the hour you ticked. That is why the
+          estimate is larger than ${mn} min.</div>` : ''}</div>
       <button class="btn ghost sm" id="pickNone">Clear</button>
       <button class="btn primary" id="runPicked">Run ${chosen.length} hour${
         chosen.length > 1 ? 's' : ''}</button>

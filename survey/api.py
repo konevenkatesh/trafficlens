@@ -147,7 +147,10 @@ def station(site_id: int):
     if not s:
         raise HTTPException(404, "no such station")
     hrs = work.hours(site_id)
-    todo_s = sum(sum(f["seconds_here"] for f in h["files"] if not f["tracks"]) for h in hrs)
+    # Whole files, counted once each -- see work.work_seconds. Summing seconds_here told
+    # a surveyor with a 3-hour recording that one hour of it would take a third of the
+    # time it really takes.
+    todo_s = work.work_seconds(site_id)
 
     # An extraction that failed leaves the hour looking exactly like one never started:
     # no tracks, tile says "detect". The surveyor presses it again, it fails again, and
@@ -765,7 +768,17 @@ app.mount("/shared", StaticFiles(directory=str(SHARED)), name="shared")
 
 @app.get("/")
 def index():
-    return HTMLResponse((STATIC / "index.html").read_text())
+    """The page, with its assets stamped so a browser cannot serve yesterday's copy.
+
+    no-store on the responses only helps a browser that asks. One that already has app.js
+    cached from a previous version may not ask at all, and then a freshly installed build
+    renders the old screens -- which is indistinguishable from the update having failed,
+    and was reported as exactly that. A changing query string is a different URL, so there
+    is nothing to reuse.
+    """
+    html = (STATIC / "index.html").read_text()
+    return HTMLResponse(html.replace("__BUILD__", version()["build"]),
+                        headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 if __name__ == "__main__":

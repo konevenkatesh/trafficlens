@@ -330,6 +330,27 @@ def _dur_s(v):
     return 0.0
 
 
+def work_seconds(site_id, hour_labels=None):
+    """Seconds of footage that will actually be decoded for these hours.
+
+    Counts each FILE once at its full length, because that is what extraction does. The
+    obvious version -- adding up how much of each hour is covered -- reads a 3-hour
+    recording as one hour of work and tells the surveyor it will take a third of the time
+    it takes. It also double-counted nothing and under-reported everything, which is the
+    hardest kind of estimate to distrust.
+    """
+    seen, total = set(), 0.0
+    for h in hours(site_id):
+        if hour_labels is not None and h["hour"] not in hour_labels:
+            continue
+        for f in h["files"]:
+            if f["tracks"] or f["video_id"] in seen:
+                continue
+            seen.add(f["video_id"])
+            total += f.get("file_seconds") or f["seconds_here"]
+    return total
+
+
 def set_clock(video_id, clock, shift_others=True):
     """Correct the start time of a recording, and by default move the rest with it.
 
@@ -435,8 +456,16 @@ def hours(site_id):
             ov = (min(b, nxt) - max(a, t)).total_seconds()
             if ov > 1:
                 covered += ov
+                # `seconds_here` is how much of this hour the file covers. It is NOT how
+                # much work extracting it costs: detection always runs over the whole
+                # file, so a 3-hour recording selected in one hour processes all three.
+                # Both numbers are reported because the surveyor needs the first to read
+                # the timeline and the second to know what they just started.
+                full = _dur_s(v)
                 members.append({"video_id": v["id"], "name": v["name"],
                                 "seconds_here": round(ov),
+                                "file_seconds": round(full),
+                                "spans_hours": max(1, int(round(full / 3600.0 + 0.49))),
                                 "tracks": counted.get(v["id"], 0)})
         if members:
             done = sum(1 for m in members if m["tracks"])
