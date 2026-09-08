@@ -278,7 +278,12 @@ def _create(gpu, token):
     # a survey should not stop because one pool happened to be empty.
     err = None
     got = None
-    for kind in ("COMMUNITY", "SECURE"):
+    # Community first because it is cheaper, then secure -- unless a network volume is
+    # attached: RunPod's docs say "Network volumes are only available for Pods in the
+    # Secure Cloud", so the community attempt can only ever fail, and it failed with
+    # "no longer any instances available", which reads as an empty datacenter.
+    kinds = ("SECURE",) if stash.is_runpod() else ("COMMUNITY", "SECURE")
+    for kind in kinds:
         # Five minutes for the create, not ninety seconds. With a public IP required,
         # RunPod was measured taking well over two minutes to answer -- and it creates
         # the pod first, so a client that gives up early leaves a billing orphan and
@@ -313,6 +318,77 @@ def _create(gpu, token):
            f"detection · {got.lower()} cloud · ${rate:.2f}/hr")
     return {"id": pod["id"], "token": token,
             "cost_per_hr": pod.get("costPerHr") or 0}, None
+
+
+# The most a card may cost per hour before it is not worth renting for this. Detection is
+# about 3 min per hour of footage on a 4090 ($0.74/hr measured); a card at twice the price
+# would have to be twice as fast to break even, and none of the cheap ones are slower than
+# half. Set high enough to reach the RTX PRO 4500 and 5090 tier, low enough to exclude
+# datacenter cards (A100, L40S, RTX PRO 6000) that cost $1.59-$6.79 for no gain here.
+MAX_GPU_PRICE = 1.25
+MIN_GPU_GB = 16
+
+
+def _no_stock(err):
+    e = (err or "").lower()
+    return ("no longer any instances" in e or "was free just now" in e
+            or "no instances" in e or "not available" in e)
+
+
+def _gpu_plan(preferred, on_note=None):
+    """Which cards to try, in order, and what they cost right now.
+
+    A network volume pins the pod to one datacenter, and a datacenter's stock changes by
+    the hour: at one probe EU-RO-1 had 4090s at Medium stock and an hour earlier none. So
+    the card is chosen at run time from what is actually there -- the surveyor's choice
+    first if it is in stock, otherwise the cheapest card with enough memory, up to
+    MAX_GPU_PRICE. Without a volume, the pod can go anywhere and the preference stands.
+
+    Returns a list of (gpu_id, price_or_None). Empty means the datacenter has nothing
+    usable at any acceptable price; `_stock_note` says what it does have.
+    """
+    if not stash.is_runpod():
+        return [(preferred, None)]
+    stock = _in_stock(stash.datacenter())
+    if stock is None:
+        return [(preferred, None)]          # could not ask; behave as before
+    ok = [(g, price) for g, price, gb in stock if gb >= MIN_GPU_GB and price <= MAX_GPU_PRICE]
+    ok.sort(key=lambda x: (x[0] != preferred, x[1]))
+    if on_note and ok and ok[0][0] != preferred:
+        short = lambda g: g.replace("NVIDIA GeForce ", "").replace("NVIDIA ", "")
+        on_note(f"{stash.datacenter()} has no {short(preferred)} free right now — "
+                + "trying " + ", then ".join(f"{short(g)} (${p:.2f}/hr)" for g, p in ok[:3]))
+    return ok
+
+
+def _in_stock(dc):
+    """(gpu_id, price, memory_gb) for every card RunPod will sell in `dc` right now.
+
+    None if RunPod could not be asked. One query, ~0.6 s measured.
+    """
+    q = """query($dc:String!){ gpuTypes { id memoryInGb
+             lowestPrice(input:{gpuCount:1, dataCenterId:$dc, secureCloud:true,
+                                supportPublicIp:true})
+               { stockStatus uninterruptablePrice } } }"""
+    d, err = cloud._gql(q, {"dc": dc}, timeout=30)
+    if err:
+        return None
+    out = []
+    for g in (d or {}).get("gpuTypes") or []:
+        lp = g.get("lowestPrice") or {}
+        if lp.get("stockStatus") and lp.get("uninterruptablePrice"):
+            out.append((g["id"], float(lp["uninterruptablePrice"]), int(g.get("memoryInGb") or 0)))
+    return out
+
+
+def _stock_note(dc):
+    stock = _in_stock(dc) or []
+    short = lambda g: g.replace("NVIDIA GeForce ", "").replace("NVIDIA ", "")
+    if not stock:
+        return f"RunPod has no card of any kind free in {dc} right now."
+    return (f"In stock in {dc} right now: "
+            + ", ".join(f"{short(g)} ${p:.2f}/hr" for g, p, gb in sorted(stock, key=lambda x: x[1]))
+            + f". The app uses cards with {MIN_GPU_GB} GB or more up to ${MAX_GPU_PRICE:.2f}/hr.")
 
 
 def _adopt_or_kill(token):
@@ -455,15 +531,38 @@ def ensure_pod(on_note=None):
         if not ok:
             return None, why
 
-        gpu = cloud.config()["gpu"]
+        preferred = cloud.config()["gpu"]
+        plan = _gpu_plan(preferred, on_note)
+        if not plan:
+            dc = stash.datacenter()
+            return None, (f"{dc}, where the storage volume is, has no suitable graphics "
+                          f"card free right now. {_stock_note(dc)} Capacity there changes "
+                          f"by the hour — press Process again in a few minutes.")
         detail = None
+        out_of_stock = set()
         for attempt in range(1, BOOT_TRIES + 1):
-            if on_note:
-                on_note(f"renting a {gpu}…"
-                        + (f" (machine {attempt} of {BOOT_TRIES})" if attempt > 1 else ""))
-            pod, err = _create(gpu, secrets.token_urlsafe(24))
-            if err:
+            pod = err = None
+            for gpu, price in plan:
+                if gpu in out_of_stock:
+                    continue
+                if on_note:
+                    on_note(f"renting a {gpu}…"
+                            + (f" (machine {attempt} of {BOOT_TRIES})" if attempt > 1 else ""))
+                pod, err = _create(gpu, secrets.token_urlsafe(24))
+                if pod:
+                    break
+                if _no_stock(err):
+                    # Gone between the stock probe and the create; the next card in the
+                    # plan is the answer, not the same request again.
+                    out_of_stock.add(gpu)
+                    continue
                 return None, err
+            if not pod:
+                dc = stash.datacenter() or "RunPod"
+                return None, (f"every suitable card in {dc} was taken before the app could "
+                              f"rent it ({', '.join(sorted(out_of_stock)) or preferred}). "
+                              f"{_stock_note(dc) if stash.is_runpod() else ''} Press Process "
+                              f"again in a few minutes.")
             cloud.note_work()
             t0 = time.time()
             ready, detail = _wait_ready(pod, on_note)

@@ -717,7 +717,10 @@ async function viewSettings() {
               `<option${g === c.gpu ? ' selected' : ''}>${esc(g)}</option>`).join('')}
           </select>
           <p class="muted-sm" style="margin:6px 0 0">A 3090 costs a third less than a 4090
-            and is nearly as quick for this — measured, not guessed.</p></div>
+            and is nearly as quick for this — measured, not guessed. This is a preference:
+            with a storage volume the machine must be in the volume's datacenter, and if
+            that card is not free there the app rents the cheapest one with 16 GB or more
+            (up to $1.25/hr) and says which.</p></div>
         <div><label class="lbl">Spending limit this month (US$)</label>
           <input class="field sm" id="climit" type="number" min="1" step="1"
                  value="${sp.limit_usd ?? 25}" style="margin-top:6px">
