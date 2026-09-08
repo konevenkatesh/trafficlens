@@ -141,3 +141,21 @@
 .hr .tick { color: var(--cc-acc); }
 .runbar { display: flex; align-items: center; gap: 12px; margin-top: 14px;
           padding-top: 14px; border-top: 1px solid var(--cc-line); }
+
+
+/* Top bar. Settings used to be a link in small grey text at the bottom of the stations
+   page, below the fold on a laptop -- which is a poor place for the screen that holds the
+   API key and the spending limit. */
+.topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center;
+          gap: 14px; height: 52px; padding: 0 24px; background: var(--cc-card);
+          border-bottom: 1px solid var(--cc-line); }
+.topbar .brand { font-weight: 680; font-size: 15px; letter-spacing: -.01em;
+                 color: var(--cc-fg); text-decoration: none; }
+.topbar .sp { flex: 1; }
+.topbar nav { display: flex; gap: 4px; }
+.topbar .tb { font-size: 13.5px; padding: 7px 12px; border-radius: var(--cc-r-md);
+              color: var(--cc-fg-2); text-decoration: none; }
+.topbar .tb:hover { background: var(--cc-hover); color: var(--cc-fg); }
+.topbar .tb.on { background: var(--cc-acc-bg); color: var(--cc-acc); font-weight: 600; }
+/* The bar is 52px of chrome, so the page below it needs less of its own. */
+.wrap { padding-top: 22px; }

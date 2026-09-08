@@ -99,7 +99,7 @@ async function viewStations() {
         padding:40px;color:var(--cc-fg-3)">No stations yet. Create one above to start.</div></div>`}
 
     <p class="muted-sm" style="margin-top:20px">Running on ${esc(dev.name)} ·
-      <a href="#settings">Settings</a> · <span id="ver">…</span></p>
+      <span id="ver">…</span></p>
   </div>`;
 
   const go = async () => {
@@ -1340,7 +1340,12 @@ function closeModal() {
 
 async function route() {
   clearInterval(POLL);
+  // A modal lives outside #app, so replacing the screen does not remove it -- one opened
+  // on a station page was still sitting over Settings after the user navigated there.
+  closeModal();
   const [name, a, b] = location.hash.replace(/^#/, '').split('/');
+  document.querySelectorAll('.topbar .tb').forEach(t => t.classList.toggle(
+    'on', t.dataset.nav === (name === 'settings' || name === 'runs' ? 'settings' : 'stations')));
   try {
     if (name === 'settings') return await viewSettings();
     if (name === 'runs') return await viewRuns();

@@ -46,12 +46,7 @@ import db
 # debug. Its CUDA torch is already inside, so the pod installs nothing at boot.
 IMAGE = "ultralytics/ultralytics:8.4.114"
 AGENT_PORT = 8000
-# How long to wait for a machine before writing it off, and how many to try. Measured:
-# a good host pulls the image and answers in about 115 seconds. One that has not answered
-# in five minutes is not slow, it is stuck -- and waiting ten minutes on it, as this first
-# did, costs twice as much and still fails. Cutting the wait and moving to another machine
-# turns a total loss into a retry that usually works.
-# Ten minutes, raised from five. Five was tuned on the only two hosts that had worked at
+# How long to wait for a machine, and how many to try. Ten minutes, raised from five. Five was tuned on the only two hosts that had worked at
 # the time, both of which answered in about 115 seconds -- so it looked like a 2.6x margin
 # and was really a sample of two. Hosts that then took longer were abandoned mid-download
 # and the work thrown away. A pod pulling a 4.6GB image and a pod crash-looping on a dead

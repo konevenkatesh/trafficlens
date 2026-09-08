@@ -8,6 +8,16 @@
 <link rel="stylesheet" href="/static/survey.css?v=__BUILD__">
 </head>
 <body>
+  <!-- Outside #app on purpose: every screen replaces #app wholesale, so anything inside
+       it has to be redrawn by each view and gets forgotten by one of them. -->
+  <header class="topbar">
+    <a class="brand" href="#stations">TrafficLens</a>
+    <span class="sp"></span>
+    <nav>
+      <a class="tb" href="#stations" data-nav="stations">Stations</a>
+      <a class="tb" href="#settings" data-nav="settings">Settings</a>
+    </nav>
+  </header>
   <div id="app"><div class="boot">Starting…</div></div>
   <div id="toast" class="toast" hidden></div>
   <script type="module" src="/static/app.js?v=__BUILD__"></script>
