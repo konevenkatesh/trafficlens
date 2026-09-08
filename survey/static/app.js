@@ -752,12 +752,14 @@ async function viewSettings() {
         <li><b>Storage → Network Volumes → New</b>: pick a datacenter (one with RTX 3090/4090
           stock), 50 GB is plenty. Copy its <b>ID</b> — that is the bucket below.</li>
         <li><b>Settings → S3 API Keys → Create</b>. Paste the access key and secret below.</li>
-        <li>Endpoint is <code>https://s3api-&lt;datacenter&gt;.runpod.io</code> and Region
+        <li>Endpoint and Region fill themselves from the volume ID once you Save (the
+          RunPod key above tells the app which datacenter the volume is in). If they stay
+          blank: Endpoint is <code>https://s3api-&lt;datacenter&gt;.runpod.io</code>, Region
           is the datacenter ID, e.g. <code>EU-RO-1</code>.</li></ol>
       <div class="grid g2">
         <div><label class="lbl">Endpoint URL</label>
           <input class="field sm" id="sEp" style="margin-top:6px" value="${esc(st.endpoint || '')}"
-                 placeholder="type it — e.g. https://s3api-eu-ro-1.runpod.io"></div>
+                 placeholder="fills itself from the volume — e.g. https://s3api-eu-ro-1.runpod.io"></div>
         <div><label class="lbl">Bucket</label>
           <input class="field sm" id="sBk" style="margin-top:6px" value="${esc(st.bucket || '')}" placeholder="network volume ID"></div>
         <div><label class="lbl">Access key</label>

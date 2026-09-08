@@ -66,6 +66,49 @@ def normalise_endpoint(ep):
     return (m.group(1) if m else ep).rstrip("/")
 
 
+def volume_datacenter(volume_id):
+    """Ask RunPod which datacenter a network volume lives in: (datacenter, reason).
+
+    The bucket IS the volume ID, and the account's RunPod key is already saved for
+    renting GPUs, so nobody should have to know or type the datacenter at all.
+    """
+    import cloud
+    volume_id = (volume_id or "").strip()
+    if not volume_id:
+        return None, "the Bucket box is empty"
+    if not cloud._key():
+        return None, "no RunPod key is saved, so the app cannot ask which datacenter it is in"
+    data, err = cloud._gql("query { myself { networkVolumes { id name dataCenterId } } }",
+                           timeout=20)
+    if err:
+        return None, f"RunPod did not answer ({err})"
+    vols = ((data or {}).get("myself") or {}).get("networkVolumes") or []
+    for v in vols:
+        if v.get("id") == volume_id and v.get("dataCenterId"):
+            return v["dataCenterId"].upper(), ""
+    have = ", ".join(f"{v.get('id')} ({v.get('name')}, {v.get('dataCenterId')})" for v in vols)
+    return None, (f"RunPod has no network volume with ID {volume_id}"
+                  + (f" — it has: {have}" if have else " — the account has no network volumes"))
+
+
+def resolve():
+    """Fill a blank endpoint/region from the volume, if RunPod will tell us.
+
+    Returns "" when the endpoint and region are set (already, or now), else why not.
+    """
+    import cloud
+    cfg = config()
+    if cfg["endpoint"] and cfg["region"].lower() not in ("", "auto"):
+        return ""
+    dc, why = volume_datacenter(cfg["bucket"])
+    if not dc:
+        return why
+    cloud._set("s3_endpoint", cfg["endpoint"] or f"https://s3api-{dc.lower()}.runpod.io")
+    if cfg["region"].lower() in ("", "auto"):
+        cloud._set("s3_region", dc)
+    return ""
+
+
 def save_config(endpoint=None, region=None, bucket=None, key=None, secret=None):
     import cloud
     if endpoint is not None:
@@ -93,6 +136,7 @@ def save_config(endpoint=None, region=None, bucket=None, key=None, secret=None):
         cloud._set("s3_key", key.strip())
     if secret is not None and secret.strip():
         cloud._set("s3_secret", secret.strip())
+    resolve()
     return config()
 
 
@@ -130,11 +174,12 @@ def _client():
 
 def check():
     """Can this app reach the bucket with these credentials? Said in one sentence."""
+    why = resolve()
     cfg = config()
     if not cfg["endpoint"]:
-        return {"ok": False, "message": "the Endpoint URL box is empty — type it in "
-                "(for a volume in EU-RO-1 that is https://s3api-eu-ro-1.runpod.io); the "
-                "grey text is only an example"}
+        return {"ok": False, "message": "the Endpoint URL is not set and could not be "
+                f"worked out: {why}. Type it in (for a volume in EU-RO-1 it is "
+                "https://s3api-eu-ro-1.runpod.io)"}
     if not cfg["bucket"]:
         return {"ok": False, "message": "the Bucket box is empty — paste the network volume ID"}
     if not cfg["configured"]:
