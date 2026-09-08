@@ -133,7 +133,7 @@ def _progress(site_id):
                 {"key": "process", "label": "Processed",
                  "done": len(ids) > 0 and extracted >= len(ids)},
                 {"key": "verify", "label": "Verified", "done": verified > 0},
-                {"key": "lines", "label": "Lines drawn", "done": has_line},
+                {"key": "lines", "label": "Count line", "done": has_line},
                 {"key": "report", "label": "Report", "done": has_line and extracted > 0},
             ]}
 
@@ -536,55 +536,6 @@ def clock_set(site_id: int, body: ClockIn):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {**r, **work.clock_report(site_id), "hours": work.hours(site_id)}
-
-
-# ───────────────────────────── speed ─────────────────────────────
-class TrapIn(BaseModel):
-    a: dict | None = None
-    b: dict | None = None
-    metres: float | None = None
-    expected_kmh: float | None = None
-    width_m: float | None = None
-
-
-@app.get("/api/stations/{site_id}/speed")
-def speed_get(site_id: int):
-    """The trap, and every reading it has produced so far."""
-    import speed
-    trap = speed.trap_for(site_id)
-    if not trap:
-        return {"trap": None, "summary": {"n": 0}}
-    trap_rows, traj_rows, fps = [], [], None
-    for v in db.rows("""SELECT id, fps FROM videos WHERE site_id=?
-                        AND COALESCE(excluded,0)=0""", site_id):
-        trap_rows.extend(speed.speeds_for(v["id"], trap))
-        traj_rows.extend(speed.speeds_by_trajectory(v["id"], trap))
-        fps = fps or v["fps"]
-    # The whole-trajectory reading is the one reported: it measures three to four times as
-    # many vehicles and does not lose the motorcycles. The two-line reading is kept as the
-    # independent check on it, and disagreement between them is surfaced as a warning.
-    has_width = bool(trap.get("width_m"))
-    primary = speed.summary(traj_rows, trap) if has_width else speed.summary(trap_rows, trap)
-    check = speed.cross_check(traj_rows, trap_rows) if has_width else {"n": 0}
-    if check.get("warning"):
-        primary.setdefault("warnings", []).append(check["warning"])
-    return {"trap": trap,
-            "method": "trajectory" if has_width else "two-line",
-            "summary": primary,
-            "two_line": speed.summary(trap_rows, trap),
-            "cross_check": check,
-            "accuracy": speed.accuracy_note(trap, fps or 12)}
-
-
-@app.post("/api/stations/{site_id}/speed")
-def speed_set(site_id: int, body: TrapIn):
-    import speed
-    try:
-        speed.save_trap(site_id, body.a, body.b, body.metres, body.expected_kmh,
-                        body.width_m)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return speed_get(site_id)
 
 
 # ───────────────────────────── annotated video ─────────────────────────────

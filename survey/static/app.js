@@ -133,7 +133,7 @@ function gates(p) {
     footage: [true, ''],
     process: [p.files > 0, 'Attach a footage folder first.'],
     verify:  [p.extracted > 0, 'Process the footage first — there is nothing to check until the model has run.'],
-    lines:   [p.extracted > 0, 'Process the footage first — the lines are drawn on a frame from it.'],
+    lines:   [p.extracted > 0, 'Process the footage first — the line is drawn on a frame from it.'],
     report:  [p.line && p.extracted > 0, 'Draw the count line first — nothing is counted until vehicles cross it.'],
   };
 }
@@ -159,7 +159,7 @@ async function viewStation(id, step) {
     footage: p.files ? `${p.files} recording(s)` : 'attach a folder',
     process: p.processed_all ? `${num(p.tracks)} vehicles` : p.pending ? `${p.pending} to run` : '',
     verify:  p.verified ? `${num(p.verified)} checked` : '',
-    lines:   p.line ? 'count line set' : '',
+    lines:   p.line ? 'drawn' : '',
     report:  '',
   };
 
@@ -201,11 +201,10 @@ async function viewStation(id, step) {
       <div id="stepVerify"></div>`;
     paintVerify(id, d);
   } else if (cur === 'lines') {
-    main.innerHTML = `<h2 class="step">Lines</h2>
-      <p class="lead">The count line turns detections into crossings. The speed lines are optional.</p>
-      <div id="stepLine"></div><div id="stepSpeed"></div>`;
+    main.innerHTML = `<h2 class="step">Count line</h2>
+      <p class="lead">Vehicles are counted when they cross this line. One line, drawn once, used by every recording at the station.</p>
+      <div id="stepLine"></div>`;
     paintLine(id, d);
-    paintSpeed(id);
   } else if (cur === 'report') {
     main.innerHTML = `<h2 class="step">Report</h2>
       <p class="lead">Counts by class, by hour and by 15-minute period, with PCU — and the annotated video to check them against.</p>
@@ -545,106 +544,6 @@ async function openClock(id) {
           viewStation(id, STEP);
         } catch (e) { toast(e.message, true); }
       } }], 'wide');
-}
-
-/* ── speed: two lines and a tape measure ── */
-async function paintSpeed(id) {
-  const el = $('#stepSpeed');
-  if (!el) return;
-  let d;
-  try { d = await api(`/api/stations/${id}/speed`, undefined, 'GET'); } catch { return; }
-  const t = d.trap, s = d.summary || {};
-  el.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="card-body">
-    <div style="display:flex;align-items:center;gap:14px">
-      <div style="flex:1"><b>Speed${t ? '' : ' (optional)'}</b>
-        <div class="muted-sm">${t
-          ? `Two lines ${t.metres} m apart${t.expected_kmh
-              ? `, expecting about ${t.expected_kmh} km/h` : ''}. ${s.n
-              ? `${num(s.n)} vehicles measured.` : 'No vehicle has crossed both yet.'}`
-          : 'Draw two lines across the road and say how far apart they are on the ground. '
-            + 'Speed is then the time between them — no camera calibration, and the only '
-            + 'number you have to get right is the distance.'}</div></div>
-      <button class="btn ${t ? 'ghost' : 'secondary'}" id="setTrap">${
-        t ? 'Change' : 'Set up speed'}</button>
-    </div>
-
-    ${s.n ? `<p class="muted-sm" style="margin:12px 0 0">Method: <b>${d.method === 'trajectory'
-        ? 'whole trajectory (with carriageway width)' : 'two lines only'}</b>${
-        d.cross_check && d.cross_check.n ? ` · cross-checked on ${d.cross_check.n} vehicles, ratio ${d.cross_check.trajectory_over_trap}` : ''}${
-        d.method !== 'trajectory' ? ' — add the carriageway width to measure ~3× more vehicles' : ''}</p>
-    <div class="grid g4" style="margin-top:12px">
-      ${[['Median', s.median], ['85th percentile', s.p85], ['15th', s.p15],
-         ['Vehicles', s.n]].map(([k, v]) => `<div>
-        <div class="big" style="font-size:22px">${v}${k === 'Vehicles' ? '' : ''}</div>
-        <div class="muted-sm">${k}${k === 'Vehicles' ? '' : ' km/h'}</div></div>`).join('')}
-    </div>
-    ${/* The 85th percentile is the figure a design or enforcement decision is made from,
-          so it gets the same weight as the median rather than hiding in a table. */''}
-    <table style="margin-top:14px"><thead><tr><th>Class</th><th class="right">Vehicles</th>
-      <th class="right">Median km/h</th></tr></thead><tbody>
-      ${Object.entries(s.by_class || {}).map(([c, v]) => `<tr><td>${esc(c)}</td>
-        <td class="right num">${num(v.n)}</td>
-        <td class="right num">${v.median}</td></tr>`).join('')}
-    </tbody></table>
-    ${(s.warnings || []).map(w => `<div class="card" style="margin-top:12px;
-        border-color:var(--cc-warn)"><div class="card-body muted-sm">${esc(w)}</div></div>`).join('')}
-    ${d.accuracy ? `<p class="muted-sm" style="margin:12px 0 0">${esc(d.accuracy.note)}</p>` : ''}
-    ` : ''}
-  </div></div>`;
-  $('#setTrap').onclick = () => openTrap(id, t);
-}
-
-function openTrap(id, trap) {
-  const pre = trap ? [{ name: 'A', ...trap.a }, { name: 'B', ...trap.b }] : [];
-  modal('Set up speed measurement', `
-    <p class="muted-sm" style="margin:0 0 10px">Draw <b>two</b> lines across the road, one
-      after the other along the direction of travel. Draw each one <b>square across the
-      carriageway</b> — line them up with something real, like a lane marking or the road
-      edge. Two lines that merely look parallel on screen are not parallel on the ground,
-      and one direction of traffic then reads far faster than the other.</p>
-    <p class="muted-sm" style="margin:0 0 10px">Then measure the distance between them on
-      the road and type it below. That measurement is the whole calibration: everything
-      else is timing, which the video already knows.</p>
-    <div id="trapHost" style="position:relative"></div>
-    <div class="grid g2" style="margin-top:12px">
-      <div><label class="lbl">Distance between the two lines (metres)</label>
-        <input class="field sm" id="trapM" type="number" min="2" max="500" step="0.1"
-               style="margin-top:6px" value="${trap ? trap.metres : ''}" placeholder="e.g. 25">
-        <p class="muted-sm" style="margin:6px 0 0">Measured on the road, not estimated from
-          the picture. At 25 m, half a metre of error is 2%; at 9 m it is 5.6%.</p></div>
-      <div><label class="lbl">Carriageway width between the line ends (metres)</label>
-        <input class="field sm" id="trapW" type="number" min="2" max="60" step="0.1"
-               style="margin-top:6px" value="${trap && trap.width_m ? trap.width_m : ''}" placeholder="e.g. 7">
-        <p class="muted-sm" style="margin:6px 0 0">With the width, every tracked position becomes
-          metres and speed comes from the whole track — about three times as many vehicles
-          measured, and the motorcycles are no longer lost. Both lines must span exactly
-          this width.</p></div>
-      <div><label class="lbl">Speed you expect here (km/h, optional)</label>
-        <input class="field sm" id="trapE" type="number" min="10" max="150" step="1"
-               style="margin-top:6px" value="${trap && trap.expected_kmh ? trap.expected_kmh : ''}"
-               placeholder="e.g. 60">
-        <p class="muted-sm" style="margin:6px 0 0">Roughly what traffic actually does, from
-          standing there. If the measurement disagrees the app works out what the distance
-          would have to be — which is how a wrong one gets caught.</p></div>
-    </div>`,
-    [{ label: 'Save', primary: true, act: async () => {
-        const ls = ED ? ED.lines() : [];   // the editor exposes lines(), not current()
-        const m = parseFloat($('#trapM').value);
-        if (ls.length !== 2) return toast('Draw exactly two lines across the road', true);
-        if (!m || m < 2) return toast('Enter the distance between the lines in metres', true);
-        const ex = parseFloat($('#trapE').value);
-        const wd = parseFloat($('#trapW').value);
-        try {
-          await api(`/api/stations/${id}/speed`,
-            { a: ls[0], b: ls[1], metres: m, expected_kmh: ex || null, width_m: wd || null });
-          closeModal(); toast('Speed measurement set up'); viewStation(id, STEP);
-        } catch (e) { toast(e.message, true); }
-      } }], 'wide');
-  ED = mountLineEditor($('#trapHost'), {
-    frameUrl: () => `/api/stations/${id}/frame?at=0.25`,
-    onSave: () => {},              // saved with the distance, by the Save button above
-  });
-  ED.load(0, pre, 0);
 }
 
 /* The editor owns its own Save button, and that is deliberate: it knows whether anything
