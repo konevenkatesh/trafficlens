@@ -183,6 +183,11 @@ jobs:
           # import error here would break the Settings screen for every user, key or not.
           $c = Invoke-RestMethod http://127.0.0.1:8801/api/cloud
           if ($null -eq $c.spend) { throw "/api/cloud answered without a spend block" }
+          # The storage check imports boto3 inside the frozen app. A bundle that lost it
+          # would fail on a surveyor's machine the first time a bucket was tested.
+          $s = Invoke-RestMethod -Method Post http://127.0.0.1:8801/api/storage/check
+          if ($null -eq $s.message) { throw "/api/storage/check did not answer" }
+          Write-Host "storage check answers: $($s.message)"
           Write-Host "cloud endpoint OK — configured=$($c.configured) limit=`$$($c.spend.limit_usd)"
           # The build must know which build it is, or "the changes are not there" cannot
           # be diagnosed on a machine we cannot see.

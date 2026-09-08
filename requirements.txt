@@ -28,3 +28,7 @@ PyYAML==6.0.3
 # inference path. Pinned and declared so it cannot be mistaken for an incidental
 # dependency and dropped again.
 matplotlib==3.11.1
+
+# Staging storage for cloud detection: the app uploads recordings to an S3-compatible
+# bucket and the pod pulls them from there. botocore was already a transitive dependency.
+boto3==1.42.32

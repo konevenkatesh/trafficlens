@@ -110,6 +110,12 @@ def main():
             print(f"  stopped {len(r['orphans'])} GPU pod(s) left from a previous session"
                   f"  (${r['recovered_usd']})", flush=True)
         cloud.start_watchdog()
+        # Recordings left in the bucket by a crash are a storage bill nobody is looking at.
+        import stash
+        sw = stash.sweep()
+        if sw.get("objects") or sw.get("multiparts"):
+            print(f"  removed {sw['objects']} stale recording(s) and {sw['multiparts']} "
+                  f"unfinished upload(s) from the bucket", flush=True)
     except Exception as e:
         print(f"  WARNING: could not check for running GPU pods: {e}", flush=True)
 

@@ -24,6 +24,7 @@ import gzip
 import hashlib
 import hmac
 import json
+import urllib.request
 import os
 import threading
 import time
@@ -58,6 +59,53 @@ LOCK = threading.Lock()
 _SEEN = [time.time()]
 
 
+def _fetch(url, dest, total_hint=0):
+    """Pull the recording from the staging bucket into /work.
+
+    This replaces receiving it from the surveyor's machine. The bucket is in a datacenter
+    and so is this pod, so a gigabyte arrives in seconds rather than the hours it took
+    over a residential uplink through a proxy. Streamed to disk, resumed with a Range
+    request on a dropped connection, reported to the console and to /progress.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    got = dest.stat().st_size if dest.exists() else 0
+    t0 = time.time()
+    last = t0
+    for attempt in range(1, 6):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "TrafficLens-agent"})
+            if got:
+                req.add_header("Range", f"bytes={got}-")
+            with urllib.request.urlopen(req, timeout=60) as r, open(dest, "ab" if got else "wb") as f:
+                total = got + int(r.headers.get("Content-Length") or 0)
+                if r.status == 200 and got:          # server ignored Range: start over
+                    f.seek(0); f.truncate(); got = 0
+                while True:
+                    chunk = r.read(4 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    got += len(chunk)
+                    if time.time() - last > 5:
+                        last = time.time()
+                        rate = got / max(last - t0, 1e-6) / 1e6
+                        with LOCK:
+                            STATE.update(phase="fetching",
+                                         pct=round(100.0 * got / max(total, 1), 1),
+                                         message=f"fetching {dest.name}: {got/1e6:.0f} of "
+                                                 f"{total/1e6:.0f} MB at {rate:.0f} MB/s")
+                        print(f"  fetching {got/1e6:.0f}/{total/1e6:.0f} MB at {rate:.0f} MB/s",
+                              flush=True)
+            if got >= total:
+                print(f"fetched {dest.name}: {got/1e6:.0f} MB in {time.time()-t0:.0f}s "
+                      f"({got/1e6/max(time.time()-t0,1e-6):.0f} MB/s)", flush=True)
+                return got
+        except Exception as e:
+            print(f"  fetch attempt {attempt} failed at {got/1e6:.0f} MB: {e}", flush=True)
+            time.sleep(3 * attempt)
+    raise RuntimeError(f"could not fetch {dest.name} from the bucket after 5 attempts")
+
+
 def _extract(job):
     """Track one video and leave the result in STATE.
 
@@ -71,18 +119,32 @@ def _extract(job):
     purpose rather than by accident, so it should be made in engine.extract too.
     """
     from collections import Counter
-    from ultralytics import YOLO
 
-    video = WORK / "video" / job["video"]
+    # Three ways a recording can be here, in order of how good they are: already on a
+    # mounted network volume (nothing to move), fetched from a bucket URL, or pushed at
+    # this pod by the surveyor's machine (works for a clip, hopeless for a recording).
+    video = Path(job["video_path"]) if job.get("video_path") else WORK / "video" / job["video"]
     weights = WORK / "models" / job["weights"]
     tracker = WORK / "tracker.yaml"
     stride = int(job.get("stride") or 1)
     frames = int(job.get("frames") or 0)
 
+    if job.get("video_path") and not video.exists():
+        raise FileNotFoundError(f"{video} is not on the mounted volume — is the pod in "
+                                f"the volume's datacenter?")
+    if job.get("video_url"):
+        with LOCK:
+            STATE.update(phase="fetching", pct=0.0, message=f"fetching {video.name}",
+                         error=None, result=None, started=time.time())
+        _fetch(job["video_url"], video)
+
     with LOCK:
         STATE.update(phase="loading", pct=0.0, message="loading the detector",
                      error=None, result=None, started=time.time())
 
+    # Imported here, after the recording is in hand, so that a recording that failed to
+    # arrive is reported as that and not as whatever the detector's import says first.
+    from ultralytics import YOLO
     print(f"loading {weights.name}", flush=True)
     model = YOLO(str(weights))
     print(f"detecting {video.name}: {frames} frames, stride {stride}", flush=True)
@@ -126,10 +188,11 @@ def _extract(job):
     # The clip is consumed; the results are in memory and about to be collected. Dropping
     # it here rather than waiting to be told means a survey cannot fill the container disk
     # just because the app died between finishing a clip and tidying up after it.
-    try:
-        video.unlink()
-    except OSError:
-        pass
+    if not job.get("video_path"):        # the app deletes volume objects itself
+        try:
+            video.unlink()
+        except OSError:
+            pass
     print(f"done: {len(tracks)} vehicles, {len(points)} boxes in "
           f"{time.time() - t0:.0f}s", flush=True)
     with LOCK:

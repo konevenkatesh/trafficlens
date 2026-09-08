@@ -42,6 +42,7 @@ from pathlib import Path
 
 import cloud
 import db
+import stash
 
 # The container. Pinned to the same ultralytics the app pins locally: a different version
 # tracks differently, and "the cloud gave me another number" is not a defect anyone can
@@ -89,6 +90,26 @@ _UPLOCK = threading.Lock()
 # the one arriving, never a growing pile.
 PREFETCH = 1
 _POD = {}                     # the pod this process is using, if any
+_STAGED = {}                  # video path -> object key already in the bucket
+_STAGELOCK = threading.Lock()
+
+
+def _stage(path, on_note=None):
+    """Put a recording in the bucket once, however many times it is asked for."""
+    with _STAGELOCK:
+        if path in _STAGED:
+            return _STAGED[path]
+    key = stash.upload(path, on_note)
+    with _STAGELOCK:
+        _STAGED[path] = key
+    return key
+
+
+def _unstage(path):
+    with _STAGELOCK:
+        key = _STAGED.pop(path, None)
+    if key:
+        stash.delete(key)
 
 # A short history of what the rented GPU has actually been doing, so the surveyor can see
 # it rather than infer it from a progress bar. Each entry is one phase with its duration;
@@ -235,6 +256,13 @@ def _create(gpu, token):
         # not used on a host that has a public IP, and supportPublicIp asks for one.
         "ports": f"{AGENT_PORT}/tcp",
         "supportPublicIp": True,
+        # With RunPod network storage configured, the pod is created in the volume's
+        # datacenter with the volume mounted at /workspace. The recording the app uploaded
+        # is then already on the pod's disk. This pins the pod to one datacenter, which
+        # narrows host choice -- the price of not moving a gigabyte twice.
+        **({"networkVolumeId": stash.config()["bucket"],
+            "volumeMountPath": "/workspace",
+            "dataCenterId": stash.datacenter()} if stash.is_runpod() else {}),
         # No network volume: the pod keeps nothing between runs, and a volume is billed
         # after the pod is gone -- the one charge that survives "stop everything".
         "volumeInGb": 0, "containerDiskInGb": 30,
@@ -616,10 +644,13 @@ def _prefetch(pod):
     """
     def run():
         for path in _upcoming(PREFETCH):
-            if not _POD.get("id"):
-                return                     # pod went away; nothing to send to
             try:
-                _put(pod, f"video/{Path(path).name}", path)
+                if stash.config()["configured"]:
+                    _stage(path)             # into the bucket; needs no pod at all
+                elif _POD.get("id"):
+                    _put(pod, f"video/{Path(path).name}", path)
+                else:
+                    return
             except Exception:
                 return
     threading.Thread(target=run, daemon=True).start()
@@ -675,11 +706,25 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
 
         _put(pod, f"models/{weights.name}", weights, note)
         _put(pod, "tracker.yaml", engine.TRACKER, note)
-        _put(pod, f"video/{Path(v['path']).name}", v["path"], note)
+        # The recording goes to the bucket, not to the pod. The pod fetches it from there
+        # over a datacenter link. Only when no bucket is configured does it go the old way,
+        # straight at the pod, which works for a small clip and not for a station recording.
+        video_url = video_path = None
+        if stash.config()["configured"]:
+            key = _stage(v["path"], note)
+            if stash.is_runpod():
+                video_path = stash.mount_path(key)      # already on the pod's disk
+                note(f"{Path(v['path']).name} is on the GPU's storage")
+            else:
+                video_url = stash.url_for(key)
+                note(f"{Path(v['path']).name} is in the bucket — the GPU is fetching it")
+        else:
+            _put(pod, f"video/{Path(v['path']).name}", v["path"], note)
 
         stride = engine.stride_for(v["fps"])
         _call(pod, "/run", json.dumps({
             "video": Path(v["path"]).name, "weights": weights.name,
+            "video_url": video_url, "video_path": video_path,
             "imgsz": imgsz, "conf": conf, "stride": stride,
             "frames": v["frames"]}).encode())
 
@@ -718,6 +763,9 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
         # Only once the trajectories are safely in the database. Deleting earlier would
         # mean a failed ingest could not be retried without sending the video again.
         _forget(pod, f"video/{Path(v['path']).name}")
+        # Only after the results are in. A run that failed keeps its staged object so the
+        # retry does not upload a gigabyte again; a crash's leftovers are swept at start.
+        _unstage(v["path"])
 
         import dedup as dedup_mod
         d = dedup_mod.dedup(video_id)

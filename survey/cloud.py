@@ -59,6 +59,13 @@ CREATE TABLE IF NOT EXISTS cloud_runs (
   status TEXT,                 -- starting | running | stopped | failed
   clips INTEGER DEFAULT 0, note TEXT);
 CREATE INDEX IF NOT EXISTS ix_cloud_started ON cloud_runs(started);
+-- The settings table this module reads and writes. It is the Lab's table, created by
+-- axle_pass, and the survey app must not depend on that module having been imported
+-- first -- in a fresh data directory it had not been, and saving a key failed with
+-- "no such table". Same columns as the Lab's definition, so both can create it.
+CREATE TABLE IF NOT EXISTS lab_site_settings (
+  site_id INTEGER, key TEXT, value TEXT, updated REAL,
+  PRIMARY KEY (site_id, key));
 """
 
 

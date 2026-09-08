@@ -546,6 +546,35 @@ def cloud_stop():
     return {**cloud.stop_all(), "status": cloud.status()}
 
 
+class StorageIn(BaseModel):
+    endpoint: str | None = None
+    region: str | None = None
+    bucket: str | None = None
+    key: str | None = None
+    secret: str | None = None
+
+
+@app.get("/api/storage")
+def storage_get():
+    """The staging bucket, secret never included."""
+    import stash
+    return stash.config()
+
+
+@app.post("/api/storage")
+def storage_set(body: StorageIn):
+    import stash
+    stash.save_config(body.endpoint, body.region, body.bucket, body.key, body.secret)
+    return stash.config()
+
+
+@app.post("/api/storage/check")
+def storage_check():
+    """Round-trip a byte through the bucket and say, in one sentence, what happened."""
+    import stash
+    return stash.check()
+
+
 @app.get("/api/cloud/runs")
 def cloud_runs(limit: int = 30):
     """The spending ledger, newest first — what ran, for how long, what it cost."""

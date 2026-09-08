@@ -669,6 +669,7 @@ const CLASS_KEY = {
    around telling them what it is costing rather than around the connection working. */
 async function viewSettings() {
   const c = await api('/api/cloud', undefined, 'GET');
+  const st = await api('/api/storage', undefined, 'GET').catch(() => ({}));
   const sp = c.spend || {};
   const live = c.running || [];
   const pct = sp.limit_usd ? Math.min(100, 100 * sp.month_usd / sp.limit_usd) : 0;
@@ -739,6 +740,39 @@ async function viewSettings() {
         runpod.io. Keep the monthly limit small.</p>
     </div></div>
 
+    <div class="card" style="margin-bottom:14px"><div class="card-body">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <h2 style="margin:0;font-size:17px">Storage for recordings</h2>
+        <span class="status ${st.configured ? 'ok' : 'warn'}">${st.configured ? 'set up' : 'needed for cloud detection'}</span></div>
+      <p class="muted-sm" style="margin:0 0 8px">A rented GPU cannot take a gigabyte
+        recording straight from this computer at any useful speed. The app puts each
+        recording on RunPod's own storage instead, and the GPU finds it on its disk.
+        Same account, no new logins. Three things in the RunPod console:</p>
+      <ol class="muted-sm" style="margin:0 0 12px;padding-left:20px">
+        <li><b>Storage → Network Volumes → New</b>: pick a datacenter (one with RTX 3090/4090
+          stock), 50 GB is plenty. Copy its <b>ID</b> — that is the bucket below.</li>
+        <li><b>Settings → S3 API Keys → Create</b>. Paste the access key and secret below.</li>
+        <li>Endpoint is <code>https://s3api-&lt;datacenter&gt;.runpod.io</code> and Region
+          is the datacenter ID, e.g. <code>EU-RO-1</code>.</li></ol>
+      <div class="grid g2">
+        <div><label class="lbl">Endpoint URL</label>
+          <input class="field sm" id="sEp" style="margin-top:6px" value="${esc(st.endpoint || '')}"
+                 placeholder="https://s3api-eu-ro-1.runpod.io"></div>
+        <div><label class="lbl">Bucket</label>
+          <input class="field sm" id="sBk" style="margin-top:6px" value="${esc(st.bucket || '')}" placeholder="network volume ID"></div>
+        <div><label class="lbl">Access key</label>
+          <input class="field sm" id="sKey" style="margin-top:6px" placeholder="${esc(st.key_hint || 'paste')}${st.key_hint ? '  (leave blank to keep)' : ''}"></div>
+        <div><label class="lbl">Secret key</label>
+          <input class="field sm" id="sSec" type="password" style="margin-top:6px" placeholder="${st.configured ? '(leave blank to keep)' : 'paste'}"></div>
+        <div><label class="lbl">Region</label>
+          <input class="field sm" id="sRg" style="margin-top:6px" value="${esc(st.region || '')}" placeholder="EU-RO-1"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+        <button class="btn secondary" id="sSave">Save</button>
+        <button class="btn ghost" id="sTest">Test the bucket</button>
+        <span class="muted-sm" id="sMsg"></span></div>
+    </div></div>
+
     <div class="card"><div class="card-body">
       <div style="display:flex;align-items:baseline;gap:12px">
         <h2 style="margin:0;font-size:17px">Spent this month</h2>
@@ -756,6 +790,19 @@ async function viewSettings() {
     </div></div>
   </div>`;
 
+  $('#sSave').onclick = async () => {
+    try {
+      await api('/api/storage', { endpoint: $('#sEp').value, bucket: $('#sBk').value,
+        key: $('#sKey').value || null, secret: $('#sSec').value || null, region: $('#sRg').value });
+      toast('Storage saved'); viewSettings();
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#sTest').onclick = async () => {
+    $('#sMsg').textContent = 'testing…';
+    try { const r = await api('/api/storage/check', {}); $('#sMsg').textContent = r.message;
+          $('#sMsg').style.color = r.ok ? 'var(--cc-ok-fg)' : 'var(--cc-bad-fg)'; }
+    catch (e) { $('#sMsg').textContent = e.message; }
+  };
   const sa = $('#stopAll');
   if (sa) sa.onclick = async () => {
     sa.disabled = true; sa.textContent = 'Stopping…';
