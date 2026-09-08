@@ -639,11 +639,13 @@ def enqueue_all(site_id, model_id=None):
     """
     vids = db.rows("""SELECT id, name FROM videos WHERE site_id=? AND COALESCE(excluded,0)=0
                       AND start_clock IS NOT NULL ORDER BY start_clock""", site_id)
-    done = {r["video_id"] for r in db.rows(
-        "SELECT DISTINCT video_id FROM tracks WHERE video_id IN (SELECT id FROM videos WHERE site_id=?)",
-        site_id)}
     queued = 0
     with _QLOCK:
+        # Read under the lock. A job that finished between this query and the lock would
+        # be in none of done / pending / busy and be queued -- and redone -- again.
+        done = {r["video_id"] for r in db.rows(
+            "SELECT DISTINCT video_id FROM tracks WHERE video_id IN (SELECT id FROM videos WHERE site_id=?)",
+            site_id)}
         pending = {j["video_id"] for j in _Q}
         busy = {c["video_id"] for c in _CURRENT.values() if c}
         for v in vids:
@@ -690,7 +692,9 @@ def enqueue_render(video_id):
     if not v:
         return {"error": "no such recording"}
     with _QLOCK:
-        if any(j["video_id"] == video_id and j["kind"] == "render" for j in _Q):
+        if any(j["video_id"] == video_id and j["kind"] == "render" for j in _Q) or \
+           any(c and c["video_id"] == video_id and c.get("kind") == "render"
+               for c in _CURRENT.values()):
             return {"queued": 0, "note": "already queued"}
         _Q.append({"kind": "render", "video_id": video_id, "name": v["name"],
                    "site_id": None, "hour": None, "model_id": None})

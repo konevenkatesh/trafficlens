@@ -93,7 +93,12 @@ def main():
     r2 = step("process again queues nothing",
               lambda: api(f"/api/stations/{sid}/process", {}))
     if r2 is not None and r2.get("queued"):
-        FAILED.append(f"second process call queued {r2['queued']} file(s) again")
+        # A file that already errored is re-queued on purpose (that is the retry path), so
+        # only call this an idempotency failure if nothing has failed yet.
+        if api(f"/api/stations/{sid}").get("failures"):
+            print("   (re-queued because the first attempt already failed — retry, not a duplicate)", flush=True)
+        else:
+            FAILED.append(f"second process call queued {r2['queued']} file(s) again")
 
     # Extraction is CPU-only on a runner: roughly 2.5x the clip's own length.
     def wait():

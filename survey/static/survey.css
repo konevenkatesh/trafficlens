@@ -8,44 +8,6 @@
 .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 24px 80px; }
 .boot { padding: 80px; text-align: center; color: var(--cc-fg-3); }
 
-/* ── the seven steps, always visible ── */
-.steps { display: flex; gap: 8px; margin: 0 0 24px; flex-wrap: wrap; }
-.steps .s {
-  flex: 1 1 150px; padding: 12px 14px; border-radius: var(--cc-r-md);
-  border: 1px solid var(--cc-line); background: var(--cc-surface);
-  display: flex; align-items: center; gap: 10px; font-size: 13px;
-}
-.steps .s .n {
-  width: 22px; height: 22px; flex: 0 0 22px; border-radius: var(--cc-r-full);
-  display: grid; place-items: center; font-size: 12px; font-weight: 600;
-  background: var(--cc-hover); color: var(--cc-fg-3);
-}
-.steps .s.done { border-color: var(--cc-ok); }
-.steps .s.done .n { background: var(--cc-ok); color: #fff; }
-.steps .s.now { border-color: var(--cc-acc); box-shadow: 0 0 0 3px var(--cc-acc-bg); }
-.steps .s.now .n { background: var(--cc-acc); color: #fff; }
-
-/* ── the hour grid: the main working surface ── */
-.hours { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; }
-.hr {
-  border: 1px solid var(--cc-line); border-radius: var(--cc-r-md); padding: 12px;
-  background: var(--cc-surface); text-align: left; cursor: pointer; font: inherit;
-  transition: border-color .12s, box-shadow .12s;
-}
-.hr:hover:not(:disabled) { border-color: var(--cc-acc); }
-.hr:disabled { cursor: default; opacity: .95; }
-.hr .t { font-size: 19px; font-weight: 650; letter-spacing: -.02em; }
-.hr .d { font-size: 11px; color: var(--cc-fg-3); margin-top: 2px; }
-.hr .bar { height: 5px; border-radius: 3px; background: var(--cc-hover); margin: 10px 0 8px; overflow: hidden; }
-.hr .bar i { display: block; height: 100%; background: var(--cc-ok); }
-.hr .cta { font-size: 12px; font-weight: 600; color: var(--cc-acc); }
-.hr.done { background: var(--cc-ok-bg); border-color: transparent; }
-.hr.done .cta { color: var(--cc-ok-fg); }
-.hr.busy { border-color: var(--cc-acc); box-shadow: 0 0 0 3px var(--cc-acc-bg); }
-.hr .night { font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
-             color: var(--cc-warn-fg); background: var(--cc-warn-bg);
-             padding: 1px 6px; border-radius: 4px; margin-left: 6px; }
-
 /* ── folder picker ── */
 .picker { max-height: 260px; overflow: auto; border: 1px solid var(--cc-line);
           border-radius: var(--cc-r-md); }

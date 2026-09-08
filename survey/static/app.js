@@ -1,7 +1,7 @@
 /* TrafficLens Survey — the whole front end.
 
-   One file, no build step, hash routing. The app has four screens and they are the four
-   things a surveyor does, in order. Anything that would need a fifth screen probably
+   One file, no build step, hash routing. A station is five steps in a sidebar -- footage,
+   process, verify, lines, report -- in the order a survey is done. Anything that would need a fifth screen probably
    belongs in the Lab instead.
 
    The rule this UI is built around: never show a number without saying where it came
@@ -91,7 +91,7 @@ async function viewStations() {
             <div class="muted-sm">vehicles detected</div>
           </div>
           <div style="text-align:right;min-width:96px">
-            <div style="font-weight:600">${done} of 4</div>
+            <div style="font-weight:600">${done} of ${s.steps.length}</div>
             <div class="muted-sm">steps done</div>
           </div>
         </div></a>`;
@@ -123,7 +123,8 @@ async function viewStations() {
 }
 
 /* ─────────────────────────── one station ─────────────────────────── */
-let STEP = null;   // the step the surveyor is looking at, so polling redraws it and not another
+let STEP = null;      // the step the surveyor is looking at, so a redraw shows it and not another
+let STEP_FOR = null;  // ...and which station that step belongs to
 
 /* Which steps may be opened, and why not. Derived from progress every time -- a stored
    "you are on step 3" goes stale the moment a file is deleted or a line redrawn. */
@@ -142,9 +143,17 @@ async function viewStation(id, step) {
   const p = d.progress, q = d.queue || {};
   const g = gates(p);
   const firstOpen = p.steps.findIndex(x => !x.done);
+  // A remembered step only counts for the station it was remembered on; arriving at a
+  // different station from the list must not open it on the last station's Report.
+  if (step == null && STEP_FOR === id) step = STEP;
   const cur = p.steps.some(x => x.key === step) ? step
             : p.steps[firstOpen >= 0 ? firstOpen : p.steps.length - 1].key;
-  STEP = cur;
+  STEP = cur; STEP_FOR = id;
+  // Keep the address honest without firing hashchange. When the resolved step differs
+  // from the URL, the sidebar link for the step on screen pointed at the current hash
+  // and was a dead click.
+  const want = `#station/${id}/${cur}`;
+  if (location.hash !== want) history.replaceState(null, '', want);
 
   const subs = {
     footage: p.files ? `${p.files} recording(s)` : 'attach a folder',
@@ -205,15 +214,25 @@ async function viewStation(id, step) {
   }
 
   clearInterval(POLL);
-  if ((q.running_all || []).length || q.running || (q.waiting || []).length)
-    POLL = setInterval(() => tick(id), 3000);
+  if (stationQueue(d).busy) POLL = setInterval(() => tick(id), 3000);
+}
+
+/* The queue is global; a station's screen must only react to its own recordings. Station
+   A processing used to show station B "Processing…" with its only button hidden. */
+function stationQueue(d) {
+  const q = d.queue || {};
+  const mine = new Set();
+  (d.hours || []).forEach(h => (h.files || []).forEach(f => mine.add(f.video_id)));
+  const running_all = (q.running_all || (q.running ? [q.running] : [])).filter(r => mine.has(r.video_id));
+  const waiting = (q.waiting || []).filter(w => mine.has(w.video_id));
+  return { ...q, running_all, waiting, busy: !!(running_all.length || waiting.length) };
 }
 
 /* ── step 2: process, once ── */
 function paintProcess(id, d) {
-  const p = d.progress, q = d.queue || {};
+  const p = d.progress, q = stationQueue(d);
   const el = $('#stepProcess');
-  const busy = (q.running_all || []).length || q.running || (q.waiting || []).length;
+  const busy = q.busy;
   const fails = d.failures || [];
   const failBlock = fails.length ? `<div class="card" style="border-color:var(--cc-bad)">
       <div class="card-body"><b>${fails.length} recording(s) could not be processed</b>
@@ -248,6 +267,8 @@ function paintProcess(id, d) {
       <div class="big">${p.pending}</div>
       <p class="muted-sm" style="margin:4px 0 14px">recording(s) to process${p.extracted ? ` · ${p.extracted} already done` : ''}</p>
       <button class="btn primary" id="goProcess">Process all footage</button>
+      ${p.extracted ? `<p class="muted-sm" style="margin:12px 0 0">${p.extracted} recording(s) are already done —
+        <a href="#station/${id}/verify">continue to Verify with those</a> while the rest are sorted out.</p>` : ''}
       <p class="muted-sm" style="margin:14px auto 0;max-width:520px">About <b>${est}</b>${
         d.device && d.device.cloud ? ' on a rented GPU, which costs money while it runs'
         : ` on ${esc((d.device || {}).name || 'this computer')}`}.
@@ -307,6 +328,7 @@ async function paintReportStep(id, d) {
   if (!vids.length) return;
   const vid = vids[0];
   let st; try { st = await api(`/api/clips/${vid}/render_state`, undefined, 'GET'); } catch { return; }
+  if (STEP_FOR !== id || STEP !== 'report') return;   // the surveyor has moved on
   const pv = $('#vidPrev'); if (!pv) return;
   if (st.ready) {
     pv.innerHTML = `<video controls preload="metadata" style="width:100%;max-height:480px;background:#000;border-radius:var(--cc-r-md)"
@@ -361,7 +383,7 @@ function paintFolder(id, d) {
       try {
         const r = await api(`/api/stations/${id}/rescan`, undefined, 'GET');
         toast(r.added.length ? `${r.added.length} new file(s) added` : 'No new files');
-        viewStation(id);
+        viewStation(id, STEP);
       } catch (err) { toast(err.message, true); e.target.disabled = false; }
     };
     $('#chFolder').onclick = () => openPicker(id);
@@ -444,7 +466,7 @@ async function openPicker(id, start) {
              toast(`${r.added.length} recording(s) attached`
                    + (r.guessed_clock.length
                       ? ` — ${r.guessed_clock.length} had no date in the filename` : ''));
-             closeModal(); viewStation(id);
+             closeModal(); viewStation(id, STEP);
            } catch (e) { toast(e.message, true); }
          } }]);
     document.querySelectorAll('[data-go]').forEach(b2 => {
@@ -468,11 +490,8 @@ function paintLine(id, d) {
       <b>${has ? 'Count line drawn' : 'Draw the count line'}</b>
       <div class="muted-sm">${has
         ? 'One line, used by every recording at this station.'
-        : d.progress.extracted
-          ? 'Vehicles are counted when they cross this line. Draw it once — detection is '
-            + 'already done, so this is the last thing before the report.'
-          : 'Vehicles are counted when they cross this line. You can draw it now, or '
-            + 'detect an hour first and draw it once you have seen the road.'}</div>
+        : 'Vehicles are counted when they cross this line. Draw it once — detection is '
+          + 'already done, so this is the last thing before the report.'}</div>
     </div>
     <button class="btn ${has ? 'ghost' : 'primary'}" id="drawLine">
       ${has ? 'Redraw' : 'Draw the line'}</button>
@@ -523,7 +542,7 @@ async function openClock(id) {
           closeModal();
           toast(`Time set — ${r.moved} recording(s) moved by ${
             Math.round(r.shift_seconds / 60)} min`);
-          viewStation(id);
+          viewStation(id, STEP);
         } catch (e) { toast(e.message, true); }
       } }], 'wide');
 }
@@ -618,7 +637,7 @@ function openTrap(id, trap) {
         try {
           await api(`/api/stations/${id}/speed`,
             { a: ls[0], b: ls[1], metres: m, expected_kmh: ex || null, width_m: wd || null });
-          closeModal(); toast('Speed measurement set up'); viewStation(id);
+          closeModal(); toast('Speed measurement set up'); viewStation(id, STEP);
         } catch (e) { toast(e.message, true); }
       } }], 'wide');
   ED = mountLineEditor($('#trapHost'), {
@@ -644,7 +663,7 @@ function openLine(id, lines) {
           await ED.save();
           if (ED.isDirty()) return toast('Could not save the line', true);
         }
-        closeModal(); viewStation(id);
+        closeModal(); viewStation(id, STEP);
       } }], 'wide');
   ED = mountLineEditor($('#lineHost'), {
     frameUrl: () => `/api/stations/${id}/frame?at=0.25`,
@@ -656,13 +675,6 @@ function openLine(id, lines) {
   ED.load(0, lines, 0);
 }
 let ED = null;
-
-/* ── step 3: the hours ── */
-/* Hours are SELECTED, not started. Clicking a tile used to send that hour straight to
-   the detector -- a misclick began work that costs an hour of machine time, and with a
-   rented GPU it also began spending money. Now clicking chooses, and one Run button
-   starts what has been chosen. The set lives outside the render so a poll redrawing the
-   grid does not lose the selection mid-choice. */
 
 function paintQueue(q) {
   const el = $('#qbar');
@@ -704,6 +716,10 @@ async function tick(id) {
   if (!q) return;
   const all = q.running_all || (q.running ? [q.running] : []);
   if (!all.length && !(q.waiting || []).length) { clearInterval(POLL); return viewStation(id, STEP); }
+  // Only the Process step draws progress bars. On any other step a bar-count mismatch is
+  // permanent, and treating it as "repaint" re-rendered the whole step every 3 seconds --
+  // resetting the preview video and refitting every speed while processing ran.
+  if (STEP !== 'process') return;
   const bars = document.querySelectorAll('[data-qfill]');
   // The number of running clips changes as the pool drains; a full repaint is the only
   // honest way to add or remove a bar.

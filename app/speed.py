@@ -159,7 +159,7 @@ def speeds_for(video_id, trap):
             continue
         t = tracks[tid]
         out.append({
-            "track_id": tid,
+            "video_id": video_id, "track_id": tid,
             "cls": t["class_override"] if t["class_override"] is not None else t["cls"],
             "kmh": round(kmh, 1),
             "seconds": round(dt, 3),
@@ -327,6 +327,16 @@ def _homography(trap):
             np.linalg.norm(b1 - a0) + np.linalg.norm(b0 - a1):
         b0, b1 = b1, b0
     src = np.array([a0, a1, b1, b0], np.float32)
+    # The four corners must form a convex quadrilateral. A B line drawn tilted along the
+    # road rather than across it gives a bow-tie; getPerspectiveTransform accepts it
+    # happily and a mid-road pixel then maps metres outside the rectangle -- silently
+    # wrong speeds. Same-sign cross products at every corner is the whole test.
+    signs = []
+    for i in range(4):
+        p0, p1, p2 = src[i], src[(i + 1) % 4], src[(i + 2) % 4]
+        signs.append(np.sign((p1[0] - p0[0]) * (p2[1] - p1[1]) - (p1[1] - p0[1]) * (p2[0] - p1[0])))
+    if len({int(x) for x in signs if x != 0}) != 1:
+        return None
     dst = np.array([[0, 0], [W, 0], [W, D], [0, D]], np.float32)
     try:
         return cv2.getPerspectiveTransform(src, dst)
@@ -381,7 +391,7 @@ def speeds_by_trajectory(video_id, trap):
             continue
         tr = tracks[tid]
         out.append({
-            "track_id": tid,
+            "video_id": video_id, "track_id": tid,
             "cls": tr["class_override"] if tr["class_override"] is not None else tr["cls"],
             "kmh": round(kmh, 1),
             "seconds": round(float(span), 3),
@@ -398,8 +408,11 @@ def cross_check(traj_rows, trap_rows):
     A systematic gap here is a geometry problem -- most likely the width, which only the
     trajectory method uses -- and it is caught before anyone quotes a number.
     """
-    a = {r["track_id"]: r["kmh"] for r in traj_rows}
-    b = {r["track_id"]: r["kmh"] for r in trap_rows}
+    # Keyed on (video, track): track ids restart at 1 in every recording, so keying on the
+    # bare id across a station paired one recording's trajectory reading with another's
+    # crossing time and produced a confident 2.0x "check the width" out of nothing.
+    a = {(r.get("video_id"), r["track_id"]): r["kmh"] for r in traj_rows}
+    b = {(r.get("video_id"), r["track_id"]): r["kmh"] for r in trap_rows}
     both = [(a[k], b[k]) for k in a if k in b and b[k] > 0]
     if len(both) < 8:
         return {"n": len(both)}

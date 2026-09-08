@@ -97,7 +97,7 @@ class StationIn(BaseModel):
 
 
 def _progress(site_id):
-    """Where this station is in the seven steps, as plain counts.
+    """Where this station is in the five steps, as plain counts.
 
     Everything is derived, never stored. A stored "step 3 of 7" goes stale the moment a
     file is deleted or a line is redrawn, and then the app confidently tells the surveyor
