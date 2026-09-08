@@ -75,6 +75,14 @@ def load(video_id):
     return arr
 
 
+def made_at(video_id):
+    """When this recording's map was made; 0 if it has none. Anything cut from the
+    recording before that -- a cached crop -- was cut at the wrong frame."""
+    _init()
+    r = db.one("SELECT made FROM frame_times WHERE video_id=?", video_id)
+    return float(r["made"]) if r and r["made"] else 0.0
+
+
 def forget(video_id):
     with _LOCK:
         _CACHE.pop(video_id, None)

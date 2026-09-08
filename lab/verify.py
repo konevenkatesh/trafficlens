@@ -163,9 +163,12 @@ def queue(video_id, only_class=None, mandatory_only=False, limit=400, answered=N
         if mandatory_only and not reasons:
             continue
         prior = done.get(tid)
+        # "Can't tell" postpones a vehicle; it does not settle it. It stays in the
+        # to-do list (after the never-seen ones) until a real answer replaces it.
+        postponed = bool(prior) and (prior.get("kind") == "skip")
         if answered is True and not prior:
             continue
-        if answered is False and prior:
+        if answered is False and prior and not postponed:
             continue
         items.append({
             "track_id": tid, "class": cls, "clock": e["clock"],
@@ -183,7 +186,7 @@ def queue(video_id, only_class=None, mandatory_only=False, limit=400, answered=N
             "attrs": attrs_of.get(tid, []),
         })
 
-    items.sort(key=lambda x: (not x["mandatory"], -x["box_w"]))
+    items.sort(key=lambda x: (not x["mandatory"], bool(x["verdict"]), -x["box_w"]))
     counts = {}
     for e in r["events"]:
         counts[e["class"]] = counts.get(e["class"], 0) + 1
@@ -251,10 +254,14 @@ def crop(video_id, track_id):
     # WRONG VEHICLE, and after a reset the wrong clip entirely: 13:00-13:15 was showing
     # crops cut from the 20:28 night clip that previously held the same id. Anything older
     # than the latest completed extraction for this video is regenerated.
-    if cp.exists() and xp.exists() and cp.stat().st_mtime >= _extracted_at(video_id):
-        return str(cp), str(xp)
     import timing
     timing.ensure(video_id)            # first crop of an unmapped clip pays for the scan
+    # ...and anything cut before the frame-time map existed was cut at the wrong frame:
+    # the surveyor saw the same empty road for every vehicle they had already opened,
+    # after the fix, because these files passed the extraction-time test.
+    fresh = max(_extracted_at(video_id), timing.made_at(video_id))
+    if cp.exists() and xp.exists() and cp.stat().st_mtime >= fresh:
+        return str(cp), str(xp)
     cap = cv2.VideoCapture(v["path"])
     ok, img = timing.read_frame(cap, video_id, b["frame"])
     cap.release()

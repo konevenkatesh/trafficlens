@@ -498,7 +498,8 @@ def review(site_id: int, mode: str = "critical", cls: str = "", limit: int = 300
             break
     # Biggest first: a vehicle 1000px wide is one a person can settle in a second, and
     # front-loading those means an interrupted session still got through the easy wins.
-    items.sort(key=lambda x: (not x.get("mandatory"), -(x.get("box_w") or 0)))
+    # Never-seen first, then the ones postponed with "can't tell", biggest first within each.
+    items.sort(key=lambda x: (not x.get("mandatory"), bool(x.get("verdict")), -(x.get("box_w") or 0)))
     return {"items": items[:limit], "mode": mode, "cls": cls, **totals,
             "classes": sorted(mix.items(), key=lambda kv: -kv[1]),
             "answers": verify.answers() if hasattr(verify, "answers") else None}
