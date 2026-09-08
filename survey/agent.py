@@ -223,9 +223,18 @@ class H(BaseHTTPRequestHandler):
             return self._json(400, {"error": "bad path"})
         dest.parent.mkdir(parents=True, exist_ok=True)
         n = int(self.headers.get("Content-Length") or 0)
+        # A station recording is about a gigabyte and cannot cross the RunPod proxy in one
+        # request -- Cloudflare cuts the body off part way and the client sees
+        # "EOF occurred in violation of protocol". So a file arrives as a sequence of
+        # parts, each written at its own byte offset, and only the last one completes it.
+        off = int(self.headers.get("X-Offset") or 0)
+        total = int(self.headers.get("X-Total") or n)
         _t0 = time.time()
-        print(f"receiving {rel} ({n/1e6:.0f} MB)", flush=True)
-        with open(dest, "wb") as f:
+        if off == 0:
+            print(f"receiving {rel} ({total/1e6:.0f} MB)", flush=True)
+        mode = "r+b" if (off and dest.exists()) else "wb"
+        with open(dest, mode) as f:
+            f.seek(off)
             left = n
             while left > 0:
                 chunk = self.rfile.read(min(1 << 20, left))
@@ -233,11 +242,18 @@ class H(BaseHTTPRequestHandler):
                     break
                 f.write(chunk)
                 left -= len(chunk)
+            if left:
+                # The client's connection died mid-part. Say so rather than accepting a
+                # short write, which would leave a file that looks complete and decodes
+                # to nothing.
+                return self._json(400, {"error": f"short write: {left} bytes missing"})
         _sz = dest.stat().st_size
         _el = max(time.time() - _t0, 1e-6)
-        print(f"received {rel}: {_sz/1e6:.0f} MB in {_el:.0f}s ({_sz/1e6/_el:.1f} MB/s)",
-              flush=True)
-        self._json(200, {"path": rel, "bytes": _sz})
+        done = _sz >= total
+        if done:
+            print(f"received {rel}: {_sz/1e6:.0f} MB ({n/1e6:.0f} MB last part at "
+                  f"{n/1e6/_el:.1f} MB/s)", flush=True)
+        self._json(200, {"path": rel, "bytes": _sz, "complete": done})
 
     def do_DELETE(self):
         """Drop a file the app is finished with.

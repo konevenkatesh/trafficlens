@@ -67,6 +67,12 @@ BOOT_TRIES = 3
 # makes no difference at all — 2.68 MB/s against 2.64 MB/s. Kept because streaming by hand
 # is what makes progress reporting and a real error message possible, not for speed.
 CHUNK = 4 << 20
+# One PUT never carries more than this. RunPod's proxy is behind Cloudflare, which cuts a
+# large request body off part way through: every one of a station's ~1GB recordings failed
+# with "EOF occurred in violation of protocol (_ssl.c:2427)" while 36MB test clips went
+# through fine. Parts also make a dropped connection cost one part instead of the file.
+PART = 32 << 20
+PART_TRIES = 4
 UPLOAD_TIMEOUT = 7200         # a 1GB station recording on a bad line
 LOCK = threading.Lock()
 # Uploads are serialised. Two at once share the same link and finish no sooner, and the
@@ -370,106 +376,67 @@ def _put(pod, rel, path, on_note=None):
 
 
 def _upload(pod, rel, path, size, on_note):
+    """Send one file as a sequence of byte-range parts.
+
+    Each part is its own request with X-Offset and X-Total, so the agent writes it in
+    place. A failed part is retried on a fresh connection; only that part is resent.
+    """
+    name = Path(path).name
+    sent, t0, last = 0, time.time(), 0.0
+    with open(path, "rb") as f:
+        while sent < size:
+            body = f.read(min(PART, size - sent))
+            if not body:
+                break
+            _put_part(pod, rel, body, sent, size, name)
+            sent += len(body)
+            now = time.time()
+            if on_note and (now - last > 3 or sent >= size):
+                last = now
+                rate = sent / max(now - t0, 1e-6) / 1e6
+                left = (size - sent) / 1e6 / max(rate, 1e-6)
+                on_note(f"sending {name} — {sent / 1e6:.0f} of {size / 1e6:.0f} MB "
+                        f"at {rate:.1f} MB/s"
+                        + (f", {left / 60:.0f} min left" if left > 90 else ""))
+    note_phase("upload", name, seconds=time.time() - t0, mb=size / 1e6,
+               mbps=(size / 1e6) / max(time.time() - t0, 1e-6))
+
+
+def _put_part(pod, rel, body, offset, total, name):
+    """One part, with retries. Raises with a readable reason if it cannot be delivered."""
     import http.client
 
-    name = Path(path).name
     host = _url(pod["id"]).replace("https://", "")
-    conn = http.client.HTTPSConnection(host, timeout=UPLOAD_TIMEOUT, blocksize=CHUNK)
-    try:
-        conn.putrequest("PUT", "/" + rel, skip_accept_encoding=True)
-        conn.putheader("X-Token", pod["token"])
-        conn.putheader("User-Agent", cloud.UA)
-        conn.putheader("Content-Type", "application/octet-stream")
-        conn.putheader("Content-Length", str(size))
-        conn.endheaders()
-
-        sent, t0, last = 0, time.time(), 0.0
-        with open(path, "rb") as f:
-            while True:
-                chunk = f.read(CHUNK)
-                if not chunk:
-                    break
-                conn.send(chunk)
-                sent += len(chunk)
-                now = time.time()
-                if on_note and (now - last > 3 or sent == size):
-                    last = now
-                    rate = sent / max(now - t0, 1e-6) / 1e6
-                    left = (size - sent) / 1e6 / max(rate, 1e-6)
-                    on_note(f"sending {name} — {sent / 1e6:.0f} of {size / 1e6:.0f} MB "
-                            f"at {rate:.1f} MB/s"
-                            + (f", {left / 60:.0f} min left" if left > 90 else ""))
-        note_phase("upload", name, seconds=time.time() - t0, mb=size / 1e6,
-                   mbps=(size / 1e6) / max(time.time() - t0, 1e-6))
-        r = conn.getresponse()
-        body = r.read()
-        if r.status != 200:
-            raise RuntimeError(f"upload of {name} failed: HTTP {r.status} "
-                               f"{body[:120].decode(errors='replace')}")
-    finally:
-        conn.close()
-
-
-def _forget(pod, rel):
-    """Delete a file from the pod and stop believing it is there.
-
-    Both halves matter. Deleting without forgetting makes the next upload of the same name
-    a no-op against a pod that no longer has it, and the run fails looking for a video
-    that was removed.
-    """
-    try:
-        _call(pod, "/" + rel, method="DELETE", timeout=60)
-    except Exception:
-        # Not fatal: the agent also drops each clip as it finishes with it, so this is
-        # the second of two chances. Counted rather than ignored, because if both keep
-        # failing the container disk fills part-way through a survey and the real cause
-        # would be invisible. `free_gb` from /progress is what actually notices.
-        pod["_undeleted"] = pod.get("_undeleted", 0) + 1
-    with _UPLOCK:
-        pod.setdefault("_sent", {}).pop(rel, None)
-
-
-def _prefetch(pod):
-    """Send the next queued clips while the GPU is busy with this one.
-
-    Upload and detection each cost roughly three to sixteen minutes per hour of footage,
-    and doing them in turn meant a station day paid for both end to end. They use nothing
-    in common -- one is this laptop's uplink, the other is a GPU on another continent --
-    so the only reason they were serial is that the code asked for them in order.
-
-    Fire and forget. A failure here costs nothing: the clip is simply uploaded the normal
-    way when its turn comes, which is what used to happen every time.
-    """
-    def run():
-        for path in _upcoming(PREFETCH):
-            if not _POD.get("id"):
-                return                     # pod went away; nothing to send to
-            try:
-                _put(pod, f"video/{Path(path).name}", path)
-            except Exception:
+    last = None
+    for attempt in range(1, PART_TRIES + 1):
+        conn = http.client.HTTPSConnection(host, timeout=UPLOAD_TIMEOUT, blocksize=CHUNK)
+        try:
+            conn.putrequest("PUT", "/" + rel, skip_accept_encoding=True)
+            conn.putheader("X-Token", pod["token"])
+            conn.putheader("User-Agent", cloud.UA)
+            conn.putheader("Content-Type", "application/octet-stream")
+            conn.putheader("Content-Length", str(len(body)))
+            conn.putheader("X-Offset", str(offset))
+            conn.putheader("X-Total", str(total))
+            conn.endheaders()
+            view = memoryview(body)
+            for i in range(0, len(body), CHUNK):
+                conn.send(view[i:i + CHUNK])
+            r = conn.getresponse()
+            payload = r.read()
+            if r.status == 200:
                 return
-    threading.Thread(target=run, daemon=True).start()
-
-
-def _upcoming(limit):
-    """Paths of the next few queued extractions, newest queue state each time.
-
-    Read from the live queue rather than passed in, because the surveyor can add or cancel
-    an hour while this one runs -- a list captured earlier would send files nobody wants.
-    """
-    try:
-        import work
-        with work._QLOCK:
-            ids = [j["video_id"] for j in work._Q
-                   if j.get("kind", "extract") == "extract"][:limit]
-    except Exception:
-        return []
-    out = []
-    for vid in ids:
-        v = db.one("SELECT path FROM videos WHERE id=?", vid)
-        if v and v["path"] and Path(v["path"]).is_file():
-            out.append(v["path"])
-    return out
+            last = f"HTTP {r.status} {payload[:120].decode(errors='replace')}"
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+        finally:
+            conn.close()
+        if attempt < PART_TRIES:
+            time.sleep(2 * attempt)
+    raise RuntimeError(
+        f"could not send {name} to the GPU: part at {offset / 1e6:.0f} MB failed "
+        f"{PART_TRIES} times ({last}). This is usually the network between this computer "
+        f"and RunPod rather than the recording.")
 
 
 # ───────────────────────────── running a clip ─────────────────────────────
