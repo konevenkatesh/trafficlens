@@ -29,6 +29,8 @@ is reachable by anyone, so a per-pod token guards every endpoint but the health 
 """
 import base64
 import gzip
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -153,14 +155,62 @@ def _url(pod_id):
     return f"https://{pod_id}-{AGENT_PORT}.proxy.runpod.net"
 
 
+def _sign(pod, method, path, length):
+    """The headers that prove a request came from the app that rented this pod.
+
+    Signature over method, path, a timestamp and the body length -- see agent._authed
+    for why it is a signature and not the token.
+    """
+    ts = f"{time.time():.3f}"
+    msg = f"{method}|{path}|{ts}|{int(length)}"
+    return {"X-Ts": ts, "X-Sig": hmac.new(pod["token"].encode(), msg.encode(),
+                                          hashlib.sha256).hexdigest()}
+
+
+def _base(pod):
+    """Where to talk to this pod: the direct TCP mapping if it has one, else the proxy.
+
+    Measured on the same pod at the same minute: /health over the direct port answered
+    in 2.4s; over the proxy it did not answer at all for six minutes. The proxy is the
+    fallback for hosts without a public IP, not the default.
+    """
+    tcp = pod.get("tcp")
+    return f"http://{tcp[0]}:{tcp[1]}" if tcp else _url(pod["id"])
+
+
 def _call(pod, path, data=None, method=None, timeout=120, raw=False):
+    method = method or ("POST" if data else "GET")
     req = urllib.request.Request(
-        _url(pod["id"]) + path, data=data, method=method or ("POST" if data else "GET"),
-        headers={"X-Token": pod["token"], "User-Agent": cloud.UA,
+        _base(pod) + path, data=data, method=method,
+        headers={**_sign(pod, method, path, len(data) if data else 0),
+                 "User-Agent": cloud.UA,
                  "Content-Type": "application/octet-stream" if raw else "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         body = r.read()
     return body if raw else json.loads(body or b"{}")
+
+
+def _direct_port(pod_id):
+    """The pod's public IP and the port RunPod mapped to the agent, or None.
+
+    This is the whole reason uploads now work: it is a raw TCP path to the pod that goes
+    nowhere near Cloudflare. Measured on the same afternoon from the same machine, the
+    proxied route ran at 0.1-0.2 MB/s and stalled for minutes at a time; this machine
+    reaches Cloudflare's own edge at 7-13 MB/s and the host is rated at 5.5 Gbit/s. The
+    proxy is for health checks and results, and that is all it is used for now.
+    """
+    d, err = cloud._gql("""query { myself { pods { id runtime { ports {
+                             ip isIpPublic privatePort publicPort type } } } } }""")
+    if err:
+        return None
+    for p in ((d or {}).get("myself") or {}).get("pods") or []:
+        if p["id"] != pod_id:
+            continue
+        for port in ((p.get("runtime") or {}).get("ports") or []):
+            if (port.get("type") == "tcp" and port.get("isIpPublic")
+                    and int(port.get("privatePort") or 0) == AGENT_PORT):
+                return port["ip"], int(port["publicPort"])
+    return None
 
 
 # ───────────────────────────── the pod ─────────────────────────────
@@ -177,7 +227,14 @@ def _create(gpu, token):
         "gpuCount": 1, "gpuTypeId": gpu,
         "name": "trafficlens", "imageName": IMAGE,
         "dockerArgs": _docker_args(token),
-        "ports": f"{AGENT_PORT}/http",
+        # The agent's port as a raw TCP mapping ONLY. Asking for "8000/http,8000/tcp"
+        # looked like belt and braces and was a bug: RunPod cannot map one port both
+        # ways, so the proxy entry was silently re-pointed at a private port nothing
+        # listened on (19123) and every proxied request answered 404. Everything --
+        # health, progress, uploads, results -- goes over the TCP mapping; the proxy is
+        # not used on a host that has a public IP, and supportPublicIp asks for one.
+        "ports": f"{AGENT_PORT}/tcp",
+        "supportPublicIp": True,
         # No network volume: the pod keeps nothing between runs, and a volume is billed
         # after the pod is gone -- the one charge that survives "stop everything".
         "volumeInGb": 0, "containerDiskInGb": 30,
@@ -194,10 +251,24 @@ def _create(gpu, token):
     err = None
     got = None
     for kind in ("COMMUNITY", "SECURE"):
-        d, err = _gql_retry(q, {"in": {**base, "cloudType": kind}}, tries=2)
+        # Five minutes for the create, not ninety seconds. With a public IP required,
+        # RunPod was measured taking well over two minutes to answer -- and it creates
+        # the pod first, so a client that gives up early leaves a billing orphan and
+        # then makes another. A long wait here is the cheapest fix there is.
+        d, err = _gql_retry(q, {"in": {**base, "cloudType": kind}}, tries=1, timeout=300)
         pod = ((d or {}).get("podFindAndDeployOnDemand") or {}) if d else {}
         if pod.get("id"):
             got = kind
+            break
+        # RunPod sometimes creates the pod and then takes longer to answer than any
+        # sensible client timeout. The pod exists, is billing, and nothing knows about it
+        # -- measured: one ran untracked for six minutes while the create call was
+        # retried on top of it. So after a failed create, look for a pod that was made
+        # for THIS attempt. Only this attempt's token can produce a valid signature, so a
+        # signed probe is proof of ownership; anything else unclaimed is a stray and dies.
+        adopted = _adopt_or_kill(token)
+        if adopted:
+            pod, got = adopted, kind
             break
     else:
         pod = {}
@@ -216,11 +287,49 @@ def _create(gpu, token):
             "cost_per_hr": pod.get("costPerHr") or 0}, None
 
 
-def _gql_retry(q, args, tries=3):
+def _adopt_or_kill(token):
+    """After a create call failed to answer: claim the pod it made if it made one.
+
+    The youngest unrecorded `trafficlens` pod rented in the last ten minutes is taken as
+    this attempt's, booting or not -- it cannot prove itself yet, and killing it for
+    that just makes another. Every other unrecorded one is a stray and is terminated.
+    Ownership is settled by the first signed call after boot: a stranger's agent answers
+    403 and the pod is dropped then.
+    """
+    from datetime import datetime, timezone
+    known = {r["pod_id"] for r in db.rows("SELECT pod_id FROM cloud_runs WHERE pod_id IS NOT NULL")}
+    d, err = cloud._gql("query { myself { pods { id name costPerHr lastStatusChange } } }")
+    if err:
+        return None
+    cands = []
+    for p in ((d or {}).get("myself") or {}).get("pods") or []:
+        if p["id"] in known or (p.get("name") or "") != "trafficlens":
+            continue
+        age = None
+        try:
+            # "Rented by User: Tue Sep 08 2026 08:21:40 GMT+0000 (...)"
+            stamp = (p.get("lastStatusChange") or "").split(": ", 1)[1].split(" GMT")[0]
+            age = (datetime.now(timezone.utc) - datetime.strptime(
+                stamp, "%a %b %d %Y %H:%M:%S").replace(tzinfo=timezone.utc)).total_seconds()
+        except Exception:
+            age = None
+        cands.append((age if age is not None else 1e9, p))
+    cands.sort(key=lambda x: x[0])
+    claimed = None
+    for age, p in cands:
+        if claimed is None and age < 600:
+            claimed = {"id": p["id"], "token": token, "cost_per_hr": p.get("costPerHr") or 0,
+                       "adopted": True}
+        else:
+            cloud.terminate(p["id"])
+    return claimed
+
+
+def _gql_retry(q, args, tries=3, timeout=90):
     """Community-cloud capacity comes and goes; one refusal is not an answer."""
     err = None
     for n in range(tries):
-        d, err = cloud._gql(q, args, timeout=90)
+        d, err = cloud._gql(q, args, timeout=timeout)
         if not err:
             return d, None
         time.sleep(2 + 3 * n)
@@ -260,17 +369,25 @@ def _wait_ready(pod, on_note=None):
                 return False, (f"the rented machine stopped before it could start "
                                f"(RunPod reported {state.lower()}). This is a fault on "
                                f"their host, not with your key or this app.")
-        try:
-            req = urllib.request.Request(_url(pod["id"]) + "/health",
-                                         headers={"User-Agent": cloud.UA})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                h = json.loads(r.read() or b"{}")
-            if h.get("ok"):
-                if not h.get("cuda"):
-                    return False, "the rented machine came up with no usable GPU"
-                return True, h.get("gpu")
-        except Exception as e:
-            last = type(e).__name__
+            if not pod.get("tcp"):
+                pod["tcp"] = _direct_port(pod["id"])
+        # The direct port first if RunPod has published one, the proxy otherwise. A pod
+        # sat fully booted for six minutes answering /health over its TCP port in 2.4s
+        # while the proxy returned nothing, and was about to be abandoned as dead.
+        bases = ([f"http://{pod['tcp'][0]}:{pod['tcp'][1]}"] if pod.get("tcp") else []) \
+                + [_url(pod["id"])]
+        for base in bases:
+            try:
+                req = urllib.request.Request(base + "/health",
+                                             headers={"User-Agent": cloud.UA})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    h = json.loads(r.read() or b"{}")
+                if h.get("ok"):
+                    if not h.get("cuda"):
+                        return False, "the rented machine came up with no usable GPU"
+                    return True, h.get("gpu")
+            except Exception as e:
+                last = type(e).__name__
         if on_note:
             # Say what is happening, not just that time is passing. Almost all of this
             # wait is one 4.6GB image download onto a machine that has never run it, which
@@ -332,6 +449,17 @@ def ensure_pod(on_note=None):
                             || ' · never came up' WHERE pod_id=?""", pod["id"])
                 continue
             pod["gpu_name"] = detail
+            try:
+                _call(pod, "/progress", timeout=20)
+            except Exception as e:
+                # Health answered but our signature did not: this is not our pod (an
+                # adopted stranger, or a token mix-up). It must not be uploaded to.
+                cloud.terminate(pod["id"])
+                return None, f"the rented machine did not accept this app's signature ({e})"
+            pod["tcp"] = pod.get("tcp") or _direct_port(pod["id"])
+            if on_note:
+                on_note("direct upload port: " + (f"{pod['tcp'][0]}:{pod['tcp'][1]}"
+                        if pod["tcp"] else "none on this host — uploads go via the proxy"))
             _POD.clear()
             _POD.update(pod)
             db.run("""UPDATE cloud_runs SET status='running',
@@ -410,17 +538,22 @@ def _put_part(pod, rel, body, offset, total, name):
     """One part, with retries. Raises with a readable reason if it cannot be delivered."""
     import http.client
 
-    host = _url(pod["id"]).replace("https://", "")
     last = None
     for attempt in range(1, PART_TRIES + 1):
-        # Floor of 60s, then 2.5s per MB: allows a part at 0.4 MB/s, fails a stalled one.
-        per_part = max(60, int(len(body) / 1e6 * 2.5))
-        conn = http.client.HTTPSConnection(host, timeout=min(UPLOAD_TIMEOUT, per_part),
-                                           blocksize=CHUNK)
+        # The socket timeout bounds each blocking call, not the part, so it is set per
+        # 4MB send: 60s means a part is abandoned once it drops below ~0.07 MB/s, which
+        # is "stalled" on any link that could ever finish a recording.
+        tcp = pod.get("tcp")
+        if tcp:
+            conn = http.client.HTTPConnection(tcp[0], tcp[1], timeout=60, blocksize=CHUNK)
+        else:
+            conn = http.client.HTTPSConnection(_url(pod["id"]).replace("https://", ""),
+                                               timeout=60, blocksize=CHUNK)
         try:
             conn.putrequest("PUT", "/" + rel, skip_accept_encoding=True)
             conn.putheader("Connection", "close")
-            conn.putheader("X-Token", pod["token"])
+            for k, v in _sign(pod, "PUT", "/" + rel, len(body)).items():
+                conn.putheader(k, v)
             conn.putheader("User-Agent", cloud.UA)
             conn.putheader("Content-Type", "application/octet-stream")
             conn.putheader("Content-Length", str(len(body)))
@@ -449,6 +582,68 @@ def _put_part(pod, rel, body, offset, total, name):
         f"could not send {name} to the GPU: part at {offset / 1e6:.0f} MB failed "
         f"{PART_TRIES} times ({last}). This is usually the network between this computer "
         f"and RunPod rather than the recording.")
+
+
+def _forget(pod, rel):
+    """Delete a file from the pod and stop believing it is there.
+
+    Both halves matter. Deleting without forgetting makes the next upload of the same name
+    a no-op against a pod that no longer has it, and the run fails looking for a video
+    that was removed.
+    """
+    try:
+        _call(pod, "/" + rel, method="DELETE", timeout=60)
+    except Exception:
+        # Not fatal: the agent also drops each clip as it finishes with it, so this is
+        # the second of two chances. Counted rather than ignored, because if both keep
+        # failing the container disk fills part-way through a survey and the real cause
+        # would be invisible. `free_gb` from /progress is what actually notices.
+        pod["_undeleted"] = pod.get("_undeleted", 0) + 1
+    with _UPLOCK:
+        pod.setdefault("_sent", {}).pop(rel, None)
+
+
+def _prefetch(pod):
+    """Send the next queued clips while the GPU is busy with this one.
+
+    Upload and detection each cost roughly three to sixteen minutes per hour of footage,
+    and doing them in turn meant a station day paid for both end to end. They use nothing
+    in common -- one is this laptop's uplink, the other is a GPU on another continent --
+    so the only reason they were serial is that the code asked for them in order.
+
+    Fire and forget. A failure here costs nothing: the clip is simply uploaded the normal
+    way when its turn comes, which is what used to happen every time.
+    """
+    def run():
+        for path in _upcoming(PREFETCH):
+            if not _POD.get("id"):
+                return                     # pod went away; nothing to send to
+            try:
+                _put(pod, f"video/{Path(path).name}", path)
+            except Exception:
+                return
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _upcoming(limit):
+    """Paths of the next few queued extractions, newest queue state each time.
+
+    Read from the live queue rather than passed in, because the surveyor can add or cancel
+    an hour while this one runs -- a list captured earlier would send files nobody wants.
+    """
+    try:
+        import work
+        with work._QLOCK:
+            ids = [j["video_id"] for j in work._Q
+                   if j.get("kind", "extract") == "extract"][:limit]
+    except Exception:
+        return []
+    out = []
+    for vid in ids:
+        v = db.one("SELECT path FROM videos WHERE id=?", vid)
+        if v and v["path"] and Path(v["path"]).is_file():
+            out.append(v["path"])
+    return out
 
 
 # ───────────────────────────── running a clip ─────────────────────────────

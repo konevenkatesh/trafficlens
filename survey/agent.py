@@ -21,6 +21,8 @@ and is reachable by anyone on the internet, so an unauthenticated agent here wou
 open GPU and an open file-write endpoint.
 """
 import gzip
+import hashlib
+import hmac
 import json
 import os
 import threading
@@ -169,8 +171,30 @@ class H(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj).encode())
 
     def _authed(self):
-        if TOKEN and self.headers.get("X-Token") != TOKEN:
-            self._json(403, {"error": "bad token"})
+        """A request is authentic if it carries a fresh HMAC of its own method, path,
+        timestamp and length under the pod's token.
+
+        The token itself never crosses the wire. It used to, as a header, which was fine
+        while every request went over HTTPS through the proxy -- but bulk uploads now go
+        over a raw TCP port straight to this pod, in plaintext, because the proxy could
+        not carry a gigabyte at any useful speed. A bearer token on that link would be
+        readable by anyone on the path; a signature is not, and a replayed signature can
+        only repeat the identical idempotent write it already authorised, for five
+        minutes, at the same offset.
+        """
+        if not TOKEN:
+            _SEEN[0] = time.time()
+            return True
+        ts, sig = self.headers.get("X-Ts", ""), self.headers.get("X-Sig", "")
+        try:
+            fresh = abs(time.time() - float(ts)) < 300
+        except ValueError:
+            fresh = False
+        msg = f"{self.command}|{self.path}|{ts}|{self.headers.get('Content-Length') or 0}"
+        want = hmac.new(TOKEN.encode(), msg.encode(), hashlib.sha256).hexdigest()
+        if not (fresh and sig and hmac.compare_digest(sig, want)):
+            self.close_connection = True
+            self._json(403, {"error": "bad or stale signature"})
             return False
         _SEEN[0] = time.time()
         return True
