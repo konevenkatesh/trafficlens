@@ -78,6 +78,28 @@ _UPLOCK = threading.Lock()
 PREFETCH = 1
 _POD = {}                     # the pod this process is using, if any
 
+# A short history of what the rented GPU has actually been doing, so the surveyor can see
+# it rather than infer it from a progress bar. Each entry is one phase with its duration;
+# uploads also carry the measured rate, which is the number that decides whether the cloud
+# is worth using at all and varies fourfold between hosts.
+ACTIVITY = []
+_ACTLOCK = threading.Lock()
+ACTIVITY_MAX = 40
+
+
+def note_phase(kind, detail="", seconds=None, mb=None, mbps=None):
+    with _ACTLOCK:
+        ACTIVITY.append({"t": time.time(), "kind": kind, "detail": detail,
+                         "seconds": round(seconds, 1) if seconds is not None else None,
+                         "mb": round(mb, 1) if mb is not None else None,
+                         "mbps": round(mbps, 2) if mbps is not None else None})
+        del ACTIVITY[:-ACTIVITY_MAX]
+
+
+def activity():
+    with _ACTLOCK:
+        return list(ACTIVITY)
+
 
 def _agent_source():
     """agent.py as text.
@@ -290,6 +312,8 @@ def ensure_pod(on_note=None):
             cloud.note_work()
             t0 = time.time()
             ready, detail = _wait_ready(pod, on_note)
+            note_phase("boot", f"{gpu} — {'ready' if ready else 'failed'}",
+                       seconds=time.time() - t0)
             # Anything that cannot be used must not stay billing. This is the failure path
             # most likely to leak money, so it terminates before it retries or reports.
             if not ready:
@@ -375,6 +399,8 @@ def _upload(pod, rel, path, size, on_note):
                     on_note(f"sending {name} — {sent / 1e6:.0f} of {size / 1e6:.0f} MB "
                             f"at {rate:.1f} MB/s"
                             + (f", {left / 60:.0f} min left" if left > 90 else ""))
+        note_phase("upload", name, seconds=time.time() - t0, mb=size / 1e6,
+                   mbps=(size / 1e6) / max(time.time() - t0, 1e-6))
         r = conn.getresponse()
         body = r.read()
         if r.status != 200:
@@ -487,9 +513,13 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
         # than leaving the uplink idle and then making the surveyor wait for it.
         _prefetch(pod)
 
+        t_detect = time.time()
         last_beat = time.time()
         while True:
             time.sleep(4)
+            import engine as _e
+            if _e.ABORT.is_set():
+                raise RuntimeError("stopped by the surveyor")
             cloud.note_work()          # the watchdog must not kill a pod mid-clip
             p = _call(pod, "/progress")
             if p.get("phase") == "error":
@@ -505,6 +535,7 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
             if time.time() - last_beat > 3600:
                 raise TimeoutError("the clip did not finish within an hour on the GPU")
 
+        note_phase("detect", Path(v["path"]).name, seconds=time.time() - t_detect)
         note("bringing the results back")
         blob = _call(pod, "/result", raw=True, timeout=1800)
         res = json.loads(gzip.decompress(blob))

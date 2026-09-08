@@ -157,3 +157,27 @@
   .wf-side nav { display: flex; flex-wrap: wrap; gap: 4px; }
   .wf-step .sub { display: none; }
 }
+
+
+/* Live activity, floating bottom-right. Processing can run for hours on a rented GPU that
+   costs money by the minute, and until now the only signal was a progress bar: no way to
+   see which phase was slow, what the upload actually achieved, or what had been spent. */
+.live { position: fixed; right: 18px; bottom: 18px; width: 340px; z-index: 40;
+        background: var(--cc-card); border: 1px solid var(--cc-line);
+        border-radius: var(--cc-r-md); box-shadow: 0 8px 28px rgba(0,0,0,.14);
+        font-size: 12.5px; overflow: hidden; }
+.live-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+             border-bottom: 1px solid var(--cc-line); font-weight: 600; }
+.live-head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-ok);
+                  flex: none; animation: livepulse 1.6s ease-in-out infinite; }
+@keyframes livepulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+.live-body { padding: 10px 12px; max-height: 46vh; overflow: auto; }
+.live-row { display: flex; gap: 8px; padding: 3px 0; }
+.live-row .k { color: var(--cc-fg-3); flex: none; min-width: 74px; }
+.live-row .v { color: var(--cc-fg); font-variant-numeric: tabular-nums; }
+.live-ph { display: flex; gap: 8px; padding: 3px 0; border-top: 1px dashed var(--cc-line); }
+.live-ph .n { flex: 1; color: var(--cc-fg-2); overflow: hidden; text-overflow: ellipsis;
+              white-space: nowrap; }
+.live-ph .d { color: var(--cc-fg-3); font-variant-numeric: tabular-nums; flex: none; }
+.live-foot { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--cc-line); }
+.live-min { position: fixed; right: 18px; bottom: 18px; z-index: 40; }

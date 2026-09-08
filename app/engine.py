@@ -2,6 +2,7 @@
 import os
 import re
 import subprocess
+import threading
 import sys
 import time
 from collections import Counter
@@ -139,6 +140,16 @@ def stride_for(fps):
         return 1
 
 
+# Set by the app when the surveyor presses Stop everything. Checked inside the detection
+# loop, because that loop is where all the time goes: without it, "stop" means "stop after
+# the current recording", which on a 3-hour file is not stopping.
+ABORT = threading.Event()
+
+
+class Aborted(Exception):
+    pass
+
+
 def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
     """Runs in a worker thread. Stores every tracked box into track_points.
 
@@ -185,6 +196,8 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
             if len(buf) >= 2000:
                 db.runmany("INSERT INTO track_points VALUES (?,?,?,?,?,?,?,?)", buf)
                 buf = []
+            if ABORT.is_set():
+                raise Aborted("stopped by the surveyor")
             if n % 250 == 0:
                 pct = 100.0 * i / max(v["frames"], 1)
                 rate = (i / v["fps"]) / max(time.time() - t0, 1e-6)
@@ -202,6 +215,13 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
         d = dedup_mod.dedup(video_id)
         db.run("UPDATE jobs SET status='done', progress=100, finished=?, message=? WHERE id=?",
                time.time(), f"{len(votes)} tracks stored, {d['suppressed']} duplicates suppressed", job_id)
+    except Aborted:
+        # Partial trajectories are worse than none: they look like a finished recording
+        # with light traffic. The clip goes back to "not processed" and can be re-run.
+        db.run("DELETE FROM track_points WHERE video_id=?", video_id)
+        db.run("DELETE FROM tracks WHERE video_id=?", video_id)
+        db.run("UPDATE jobs SET status='error', message=?, finished=? WHERE id=?",
+               "stopped by the surveyor", time.time(), job_id)
     except Exception as e:
         db.run("UPDATE jobs SET status='error', message=?, finished=? WHERE id=?",
                str(e)[:300], time.time(), job_id)

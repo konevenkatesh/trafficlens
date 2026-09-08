@@ -389,7 +389,49 @@ def queue():
 
 @app.post("/api/queue/cancel")
 def queue_cancel():
+    """Drop what has not started. The recording in progress finishes."""
     return work.cancel()
+
+
+@app.post("/api/queue/stop")
+def queue_stop():
+    """Stop everything now: drop the queue, abort the running detection, release the GPU.
+
+    Separate from cancel because they answer different questions. "Stop after these"
+    finishes what it started, which on a three-hour recording means another hour of
+    rented GPU. This is the one for "I did not mean to start that".
+    """
+    return work.stop_now()
+
+
+@app.get("/api/activity")
+def activity():
+    """What is happening right now, with the numbers that explain it.
+
+    One call for the live panel: queue, phase history from the pod (boot, upload with its
+    measured rate, detect), and what it has cost so far. The upload rate is here because
+    it varies fourfold between hosts and it, not the GPU, usually decides whether the
+    cloud was worth using.
+    """
+    q = work.queue_state()
+    out = {"queue": q, "device": work.device_note(), "phases": [], "cloud": None}
+    try:
+        import remote
+        out["phases"] = remote.activity()[-12:]
+        if remote.in_use():
+            import cloud
+            st = cloud.status()
+            live = st.get("running") or []
+            out["cloud"] = {
+                "ok": st.get("ok"), "gpu": st.get("gpu"),
+                "pods": [{"id": p["id"], "uptime_s": p["uptime_s"],
+                          "cost_per_hr": p["cost_per_hr"],
+                          "spent_so_far": p["spent_so_far"]} for p in live],
+                "spend": st.get("spend"), "error": st.get("error"),
+            }
+    except Exception as e:
+        out["cloud_error"] = str(e)[:200]
+    return out
 
 
 @app.get("/api/models")

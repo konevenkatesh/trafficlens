@@ -81,8 +81,11 @@ def _extract(job):
         STATE.update(phase="loading", pct=0.0, message="loading the detector",
                      error=None, result=None, started=time.time())
 
+    print(f"loading {weights.name}", flush=True)
     model = YOLO(str(weights))
+    print(f"detecting {video.name}: {frames} frames, stride {stride}", flush=True)
     points, votes, span = [], {}, {}
+    _last_log = time.time()
     t0 = time.time()
     results = model.track(source=str(video), stream=True, persist=True,
                           tracker=str(tracker), conf=float(job.get("conf", 0.12)),
@@ -102,6 +105,15 @@ def _extract(job):
                 s = span.get(tid)
                 span[tid] = (i if s is None else s[0], i)
         if n % 250 == 0:
+            # Every ~30s to the pod console, so the RunPod log shows progress rather than
+            # going silent for an hour. A container that prints nothing is impossible to
+            # tell from one that has hung, which is exactly how a healthy pod got reported
+            # as stuck.
+            if time.time() - _last_log > 30:
+                _last_log = time.time()
+                pct = min(100.0, 100.0 * i / max(frames, 1))
+                print(f"  {pct:5.1f}%  frame {i}/{frames}  {len(votes)} vehicles",
+                      flush=True)
             with LOCK:
                 STATE.update(phase="running",
                              pct=round(min(100.0, 100.0 * i / max(frames, 1)), 1),
@@ -116,6 +128,8 @@ def _extract(job):
         video.unlink()
     except OSError:
         pass
+    print(f"done: {len(tracks)} vehicles, {len(points)} boxes in "
+          f"{time.time() - t0:.0f}s", flush=True)
     with LOCK:
         STATE.update(phase="done", pct=100.0, error=None,
                      message=f"{len(tracks)} vehicles, {len(points)} boxes",
@@ -127,6 +141,7 @@ def _run(job):
     try:
         _extract(job)
     except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}", flush=True)
         with LOCK:
             STATE.update(phase="error", error=f"{type(e).__name__}: {e}",
                          message=traceback.format_exc()[-800:])
@@ -136,7 +151,9 @@ class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *a):
-        pass                                   # the pod's console is billed, not read
+        # Per-request logging stays off -- a poll every four seconds would bury everything
+        # else. Phase lines are printed explicitly instead, by the handlers below.
+        pass
 
     def _send(self, code, body=b"", ctype="application/json", extra=None):
         self.send_response(code)
@@ -206,6 +223,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(400, {"error": "bad path"})
         dest.parent.mkdir(parents=True, exist_ok=True)
         n = int(self.headers.get("Content-Length") or 0)
+        _t0 = time.time()
+        print(f"receiving {rel} ({n/1e6:.0f} MB)", flush=True)
         with open(dest, "wb") as f:
             left = n
             while left > 0:
@@ -214,7 +233,11 @@ class H(BaseHTTPRequestHandler):
                     break
                 f.write(chunk)
                 left -= len(chunk)
-        self._json(200, {"path": rel, "bytes": dest.stat().st_size})
+        _sz = dest.stat().st_size
+        _el = max(time.time() - _t0, 1e-6)
+        print(f"received {rel}: {_sz/1e6:.0f} MB in {_el:.0f}s ({_sz/1e6/_el:.1f} MB/s)",
+              flush=True)
+        self._json(200, {"path": rel, "bytes": _sz})
 
     def do_DELETE(self):
         """Drop a file the app is finished with.
@@ -252,5 +275,5 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     (WORK / "video").mkdir(parents=True, exist_ok=True)
     (WORK / "models").mkdir(parents=True, exist_ok=True)
-    print(f"agent listening on {PORT}", flush=True)
+    print(f"agent listening on {PORT} — ready for work", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

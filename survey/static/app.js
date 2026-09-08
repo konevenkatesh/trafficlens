@@ -214,6 +214,9 @@ async function viewStation(id, step) {
 
   clearInterval(POLL);
   if (stationQueue(d).busy) POLL = setInterval(() => tick(id), 3000);
+  // The panel is global: processing keeps running while the surveyor moves around, and it
+  // removes itself as soon as the queue is empty.
+  liveStart();
 }
 
 /* The queue is global; a station's screen must only react to its own recordings. Station
@@ -589,6 +592,7 @@ function paintQueue(q) {
         <span class="muted-sm">${wait ? ` · ${wait} more waiting` : ''}${
           q.workers > 1 ? ` · ${q.workers} at a time` : ''}</span></div>
       <button class="btn ghost sm" id="qcancel">Stop after these</button>
+      <button class="btn danger sm" id="qstop">Stop everything</button>
     </div>
     ${/* One bar per running clip. With a pool, a single bar would jump between clips and
           read as progress going backwards. */''}
@@ -604,7 +608,21 @@ function paintQueue(q) {
   const c = $('#qcancel');
   if (c) c.onclick = async () => {
     const r2 = await api('/api/queue/cancel', {});
-    toast(`${r2.dropped} queued clip(s) dropped`);
+    toast(`${r2.dropped} queued clip(s) dropped — the current one finishes`);
+  };
+  const sp = $('#qstop');
+  if (sp) sp.onclick = async () => {
+    // Named for what it costs, not for what it does. Stopping mid-recording throws that
+    // recording's work away -- partial trajectories read as a quiet hour, so they are
+    // deleted rather than kept.
+    if (!confirm('Stop everything now?\n\nThe recording being processed is abandoned and '
+                 + 'must be run again from the start. Any rented GPU is released.')) return;
+    sp.disabled = true; sp.textContent = 'Stopping…';
+    try {
+      const r2 = await api('/api/queue/stop', {});
+      toast(`Stopped. ${r2.dropped} dropped${r2.gpus_stopped.length
+        ? `, ${r2.gpus_stopped.length} GPU released` : ''}`);
+    } catch (e) { toast(e.message, true); sp.disabled = false; sp.textContent = 'Stop everything'; }
   };
 }
 
@@ -1237,6 +1255,99 @@ function watchRender(vid, btn) {
   }, 4000);
 }
 
+/* ─────────────────────────── the live panel ─────────────────────────── */
+/* Floating, on every screen, only while something is running. Processing a station day on
+   a rented GPU is hours of somebody else's computer spending money, and the honest thing
+   is to show what it is doing and what it has cost -- not a bar that says 40%. */
+let LIVE = null, LIVE_MIN = false;
+
+function liveStop() { clearInterval(LIVE); LIVE = null; const e = $('#live'); if (e) e.remove(); }
+
+async function liveTick() {
+  let d;
+  try { d = await api('/api/activity', undefined, 'GET'); } catch { return; }
+  const q = d.queue || {};
+  const running = q.running_all || (q.running ? [q.running] : []);
+  const waiting = (q.waiting || []).length;
+  if (!running.length && !waiting) return liveStop();
+
+  let el = $('#live');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'live';
+    document.body.appendChild(el);
+  }
+  if (LIVE_MIN) {
+    el.className = 'live-min';
+    el.innerHTML = `<button class="btn secondary sm" id="liveOpen">
+      ▲ ${running.length ? `${Math.round(running[0].progress || 0)}% · ` : ''}activity</button>`;
+    $('#liveOpen').onclick = () => { LIVE_MIN = false; liveTick(); };
+    return;
+  }
+  el.className = 'live';
+
+  const c = d.cloud;
+  const pod = c && c.pods && c.pods[0];
+  const rows = [];
+  rows.push(['Running on', c ? `rented ${esc((c.gpu || '').replace('NVIDIA GeForce ', ''))}`
+                             : esc((d.device || {}).name || 'this computer')]);
+  if (running.length) {
+    const r = running[0];
+    rows.push(['Recording', esc(r.name || '')]);
+    rows.push(['Progress', `${Math.round(r.progress || 0)}%${r.eta_s ? ` · ${mins(r.eta_s)} left` : ''}`]);
+    if (r.message) rows.push(['Doing', esc(r.message)]);
+  }
+  if (waiting) rows.push(['Waiting', `${waiting} recording(s)`]);
+  if (pod) {
+    rows.push(['GPU up for', mins(pod.uptime_s)]);
+    rows.push(['This pod', `$${pod.spent_so_far} at $${pod.cost_per_hr}/hr`]);
+  }
+  if (c && c.spend) rows.push(['This month', `$${(c.spend.month_usd ?? 0).toFixed(2)} of $${(c.spend.limit_usd ?? 0).toFixed(0)}`]);
+  if (c && c.error) rows.push(['RunPod', `<span style="color:var(--cc-bad-fg)">${esc(c.error)}</span>`]);
+
+  // Phases newest first: the answer to "what is taking so long" is usually here, and the
+  // upload rate is the number that decides whether the cloud was worth it.
+  const ph = (d.phases || []).slice().reverse().slice(0, 6).map(p => {
+    const label = { boot: 'Started GPU', upload: 'Sent', detect: 'Detected' }[p.kind] || p.kind;
+    const extra = p.mbps ? ` · ${p.mbps} MB/s` : '';
+    return `<div class="live-ph"><span class="n">${label} ${esc(p.detail || '')}${extra}</span>
+      <span class="d">${p.seconds != null ? mins(p.seconds) : ''}</span></div>`;
+  }).join('');
+
+  el.innerHTML = `<div class="live-head"><span class="dot"></span>
+      <span style="flex:1">Working</span>
+      <button class="btn ghost sm" id="liveMin" title="Minimise">–</button></div>
+    <div class="live-body">
+      ${rows.map(([k, v]) => `<div class="live-row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')}
+      ${ph ? `<div style="margin-top:8px;color:var(--cc-fg-3)">Finished phases</div>${ph}` : ''}
+    </div>
+    <div class="live-foot">
+      <button class="btn ghost sm" id="liveCancel" style="flex:1">Stop after these</button>
+      <button class="btn danger sm" id="liveStop" style="flex:1">Stop everything</button>
+    </div>`;
+  $('#liveMin').onclick = () => { LIVE_MIN = true; liveTick(); };
+  $('#liveCancel').onclick = async () => {
+    const r = await api('/api/queue/cancel', {});
+    toast(`${r.dropped} queued clip(s) dropped — the current one finishes`);
+  };
+  $('#liveStop').onclick = async () => {
+    if (!confirm('Stop everything now?\n\nThe recording being processed is abandoned and '
+                 + 'must be run again from the start. Any rented GPU is released.')) return;
+    try {
+      const r = await api('/api/queue/stop', {});
+      toast(`Stopped. ${r.dropped} dropped${r.gpus_stopped.length
+        ? `, ${r.gpus_stopped.length} GPU released` : ''}`);
+      liveStop();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+function liveStart() {
+  if (LIVE) return;
+  liveTick();
+  LIVE = setInterval(liveTick, 3000);
+}
+
 /* ─────────────────────────── modal + router ─────────────────────────── */
 function modal(title, body, actions, wide) {
   closeModal();
@@ -1275,6 +1386,7 @@ function closeModal() {
 
 async function route() {
   clearInterval(POLL);
+  liveStart();
   // A modal lives outside #app, so replacing the screen does not remove it -- one opened
   // on a station page was still sitting over Settings after the user navigated there.
   closeModal();

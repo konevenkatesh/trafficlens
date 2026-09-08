@@ -715,6 +715,37 @@ def cancel(video_id=None):
                 "still_running": [dict(c) for c in _CURRENT.values() if c]}
 
 
+def stop_now():
+    """Stop everything: drop the queue, abort the running detection, release any GPU.
+
+    Distinct from cancel(), which only drops what has not started -- on a three-hour
+    recording that is not stopping, it is waiting. This is the button for "I did not mean
+    to start that" and for "stop spending money now".
+    """
+    import engine
+    dropped = cancel()["dropped"]
+    engine.ABORT.set()
+    stopped = []
+    try:
+        import cloud
+        if cloud.config()["configured"]:
+            stopped = cloud.stop_all().get("stopped", [])
+    except Exception:
+        pass
+    # Cleared once the workers have seen it, so the next Process press is not aborted by
+    # a flag left standing from the last one.
+    def _clear():
+        for _ in range(60):
+            time.sleep(1)
+            with _QLOCK:
+                if not _CURRENT:
+                    break
+        engine.ABORT.clear()
+    threading.Thread(target=_clear, daemon=True).start()
+    return {"dropped": dropped, "aborting": [dict(c) for c in _CURRENT.values() if c],
+            "gpus_stopped": stopped}
+
+
 def queue_state():
     with _QLOCK:
         running = [dict(v) for v in _CURRENT.values() if v]
