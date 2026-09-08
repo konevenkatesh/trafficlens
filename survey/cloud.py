@@ -275,12 +275,34 @@ def _close_stale(live_ids):
                now, round(ran, 1), round((r["cost_per_hr"] or 0) * ran / 3600.0, 4), r["id"])
 
 
+# "Stop everything" holds renting shut for a while afterwards. After the first real run's
+# stop, three pods were rented in the ninety seconds that followed: whatever asked for
+# them, a stop must mean no new machine until the surveyor presses Process again.
+_HOLD_UNTIL = 0.0
+
+
+def hold(seconds=180):
+    global _HOLD_UNTIL
+    _HOLD_UNTIL = time.time() + seconds
+
+
+def release():
+    global _HOLD_UNTIL
+    _HOLD_UNTIL = 0.0
+
+
+def held():
+    return time.time() < _HOLD_UNTIL
+
+
 def may_start():
     """Whether a new pod is allowed, and if not, exactly why.
 
     Checked before every create. A monthly limit that is only displayed is a limit that
     gets exceeded; this one refuses.
     """
+    if held():
+        return False, "stopped by the surveyor — press Process to start again"
     cfg = config()
     if not cfg["configured"]:
         return False, "no RunPod API key saved — add one in Settings"

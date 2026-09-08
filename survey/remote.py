@@ -466,6 +466,13 @@ def _wait_ready(pod, on_note=None):
     last = None
     checked = 0.0
     while time.time() - t0 < BOOT_TIMEOUT:
+        if _stopping():
+            # "Stop everything" during a boot. After the first real run's stop, three
+            # fresh pods were rented in ninety seconds: the pod being booted was
+            # terminated by the stop, the boot loop read that as a bad host and tried
+            # the next machine, twice. A stop is not a host fault.
+            cloud.terminate(pod["id"])
+            return False, "stopped by the surveyor"
         if time.time() - checked > 30:
             checked = time.time()
             state, _up = _pod_state(pod["id"])
@@ -514,6 +521,15 @@ def _wait_ready(pod, on_note=None):
                    f"where nothing this app does can help.")
 
 
+def _stopping():
+    """Has the surveyor pressed Stop everything? Nothing may be rented while this holds."""
+    try:
+        import engine
+        return engine.ABORT.is_set()
+    except Exception:
+        return False
+
+
 def ensure_pod(on_note=None):
     """The pod for this session, creating one if there is not a live one already.
 
@@ -541,6 +557,8 @@ def ensure_pod(on_note=None):
         detail = None
         out_of_stock = set()
         for attempt in range(1, BOOT_TRIES + 1):
+            if _stopping():
+                return None, "stopped by the surveyor"
             pod = err = None
             for gpu, price in plan:
                 if gpu in out_of_stock:

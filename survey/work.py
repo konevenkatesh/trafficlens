@@ -637,6 +637,11 @@ def enqueue_all(site_id, model_id=None):
     Files that already have tracks are never re-queued, and files already waiting or
     running are skipped: pressing the button twice must not do the work twice.
     """
+    try:
+        import cloud
+        cloud.release()                # Process pressed: the post-stop hold is over
+    except Exception:
+        pass
     vids = db.rows("""SELECT id, name FROM videos WHERE site_id=? AND COALESCE(excluded,0)=0
                       AND start_clock IS NOT NULL ORDER BY start_clock""", site_id)
     queued = 0
@@ -728,6 +733,7 @@ def stop_now():
     stopped = []
     try:
         import cloud
+        cloud.hold()                   # no new machine until Process is pressed again
         if cloud.config()["configured"]:
             stopped = cloud.stop_all().get("stopped", [])
     except Exception:
