@@ -3,7 +3,7 @@
 Seven steps, in order, and nothing else on screen:
 
     name the station -> point at the footage folder -> draw the count line once
-    -> extract an hour -> review what the model is unsure of -> read the report
+    -> process the footage -> review what the model is unsure of -> read the report
 
 The Lab is where models are made. This app only *uses* one: a global detector plus the
 universal heads that ship with it. There is no training here, no dataset builder, no
@@ -60,16 +60,26 @@ async def no_cache(request, call_next):
     return resp
 
 
+_STARTED = time.time()
+
+
 @app.get("/api/version")
 def version():
     """Which build this actually is. The first question after any "I don't see the
     changes", and it used to be unanswerable."""
     try:
         import buildinfo
-        return {"build": buildinfo.BUILD, "commit": buildinfo.COMMIT,
-                "built": buildinfo.BUILT}
+        build, commit, built = buildinfo.BUILD, buildinfo.COMMIT, buildinfo.BUILT
     except Exception:
-        return {"build": "unknown", "commit": "unknown", "built": ""}
+        build, commit, built = "unknown", "unknown", ""
+    # The build number is also the cache-buster on every asset URL. A shipped build gets
+    # a new number each time, so that works; a source checkout is "development" forever,
+    # and the browser kept serving last week's app.js against this morning's code --
+    # which is precisely the "I don't see the changes" this endpoint exists to answer.
+    # Stamping the process start time makes every restart a new URL.
+    if build in ("development", "unknown"):
+        build = f"{build}-{int(_STARTED)}"
+    return {"build": build, "commit": commit, "built": built}
 
 
 @app.get("/api/health")
@@ -111,11 +121,20 @@ def _progress(site_id):
             # The line comes AFTER detection, because that is when there is a frame to
             # draw it on and some idea of where the traffic runs. Counting, review and
             # the report all need it; detection does not.
+            "processed_all": len(ids) > 0 and extracted >= len(ids),
+            "pending": max(0, len(ids) - extracted),
+            # The order a survey is actually done in. Processing is one action over every
+            # file and happens once; verifying corrects the model's classes and those
+            # corrections are what the report counts; the lines turn detections into
+            # crossings; the report is the output. Hours are not a step -- they are how
+            # the report is laid out.
             "steps": [
-                {"key": "folder", "label": "Footage attached", "done": len(ids) > 0},
-                {"key": "extract", "label": "Vehicles detected", "done": extracted > 0},
-                {"key": "line", "label": "Count line drawn", "done": has_line},
-                {"key": "review", "label": "Reviewed", "done": verified > 0},
+                {"key": "footage", "label": "Footage", "done": len(ids) > 0},
+                {"key": "process", "label": "Processed",
+                 "done": len(ids) > 0 and extracted >= len(ids)},
+                {"key": "verify", "label": "Verified", "done": verified > 0},
+                {"key": "lines", "label": "Lines drawn", "done": has_line},
+                {"key": "report", "label": "Report", "done": has_line and extracted > 0},
             ]}
 
 
@@ -155,9 +174,13 @@ def station(site_id: int):
     # An extraction that failed leaves the hour looking exactly like one never started:
     # no tracks, tile says "detect". The surveyor presses it again, it fails again, and
     # nothing on screen ever says why. Surface it.
+    # Latest failed job per recording, not every failed job. A file retried three times
+    # was listed three times, which reads as three broken files.
     fails = db.rows("""SELECT j.video_id, j.message, j.finished, v.name
                        FROM jobs j JOIN videos v ON v.id=j.video_id
                        WHERE v.site_id=? AND j.kind='extract' AND j.status='error'
+                         AND j.id = (SELECT MAX(j2.id) FROM jobs j2
+                                     WHERE j2.video_id=j.video_id AND j2.kind='extract')
                          AND NOT EXISTS (SELECT 1 FROM tracks t WHERE t.video_id=j.video_id)
                        ORDER BY j.id DESC LIMIT 10""", site_id)
     # How many recordings sit on a guessed time. The screen has always had code to warn
@@ -318,6 +341,15 @@ def set_line(site_id: int, body: LineIn):
 # ───────────────────────────── extracting ─────────────────────────────
 class HourIn(BaseModel):
     model_id: str | None = None
+
+
+@app.post("/api/stations/{site_id}/process")
+def process_all(site_id: int, body: HourIn | None = None):
+    """Detect every recording at the station that has not been detected. Idempotent."""
+    if not db.one("SELECT id FROM sites WHERE id=?", site_id):
+        raise HTTPException(404, "no such station")
+    r = work.enqueue_all(site_id, (body.model_id if body else None))
+    return {**r, "queue": work.queue_state()}
 
 
 @app.post("/api/stations/{site_id}/hours/{hour}/extract")
@@ -512,6 +544,7 @@ class TrapIn(BaseModel):
     b: dict | None = None
     metres: float | None = None
     expected_kmh: float | None = None
+    width_m: float | None = None
 
 
 @app.get("/api/stations/{site_id}/speed")
@@ -521,12 +554,25 @@ def speed_get(site_id: int):
     trap = speed.trap_for(site_id)
     if not trap:
         return {"trap": None, "summary": {"n": 0}}
-    rows, fps = [], None
+    trap_rows, traj_rows, fps = [], [], None
     for v in db.rows("""SELECT id, fps FROM videos WHERE site_id=?
                         AND COALESCE(excluded,0)=0""", site_id):
-        rows.extend(speed.speeds_for(v["id"], trap))
+        trap_rows.extend(speed.speeds_for(v["id"], trap))
+        traj_rows.extend(speed.speeds_by_trajectory(v["id"], trap))
         fps = fps or v["fps"]
-    return {"trap": trap, "summary": speed.summary(rows, trap),
+    # The whole-trajectory reading is the one reported: it measures three to four times as
+    # many vehicles and does not lose the motorcycles. The two-line reading is kept as the
+    # independent check on it, and disagreement between them is surfaced as a warning.
+    has_width = bool(trap.get("width_m"))
+    primary = speed.summary(traj_rows, trap) if has_width else speed.summary(trap_rows, trap)
+    check = speed.cross_check(traj_rows, trap_rows) if has_width else {"n": 0}
+    if check.get("warning"):
+        primary.setdefault("warnings", []).append(check["warning"])
+    return {"trap": trap,
+            "method": "trajectory" if has_width else "two-line",
+            "summary": primary,
+            "two_line": speed.summary(trap_rows, trap),
+            "cross_check": check,
             "accuracy": speed.accuracy_note(trap, fps or 12)}
 
 
@@ -534,7 +580,8 @@ def speed_get(site_id: int):
 def speed_set(site_id: int, body: TrapIn):
     import speed
     try:
-        speed.save_trap(site_id, body.a, body.b, body.metres, body.expected_kmh)
+        speed.save_trap(site_id, body.a, body.b, body.metres, body.expected_kmh,
+                        body.width_m)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return speed_get(site_id)
@@ -692,7 +739,7 @@ def report(site_id: int):
     vids = _site_videos(site_id)
     if not vids:
         return {"station": dict(s), "empty": True,
-                "note": "nothing extracted yet — run an hour first"}
+                "note": "nothing extracted yet — process the footage first"}
 
     per_class, pcu_by_class, bins, clips = {}, {}, [], []
     total = pcu_total = 0

@@ -625,6 +625,39 @@ def estimate_s(seconds_of_footage):
     return seconds_of_footage / max(device_note()["speed"], 0.01)
 
 
+def enqueue_all(site_id, model_id=None):
+    """Queue every recording at this station that has not been detected yet.
+
+    The one button. Hour-by-hour selection was dropped from the processing step because
+    detection is per FILE -- a three-hour recording ticked in one hour ran all three hours
+    anyway -- so the choice it offered was mostly an illusion, and the honest version of it
+    was a warning explaining why the estimate was three times the tile. Hours belong in
+    the report, where they mean something.
+
+    Files that already have tracks are never re-queued, and files already waiting or
+    running are skipped: pressing the button twice must not do the work twice.
+    """
+    vids = db.rows("""SELECT id, name FROM videos WHERE site_id=? AND COALESCE(excluded,0)=0
+                      AND start_clock IS NOT NULL ORDER BY start_clock""", site_id)
+    done = {r["video_id"] for r in db.rows(
+        "SELECT DISTINCT video_id FROM tracks WHERE video_id IN (SELECT id FROM videos WHERE site_id=?)",
+        site_id)}
+    queued = 0
+    with _QLOCK:
+        pending = {j["video_id"] for j in _Q}
+        busy = {c["video_id"] for c in _CURRENT.values() if c}
+        for v in vids:
+            if v["id"] in done or v["id"] in pending or v["id"] in busy:
+                continue
+            _Q.append({"kind": "extract", "video_id": v["id"], "name": v["name"],
+                       "site_id": site_id, "hour": None, "model_id": model_id})
+            queued += 1
+    if queued:
+        _ensure_worker()
+    return {"queued": queued, "already_done": len(done),
+            "total": len(vids), "seconds": work_seconds(site_id)}
+
+
 def enqueue_hour(site_id, hour_label, model_id=None):
     """Queue every unextracted file covering one hour."""
     hrs = [h for h in hours(site_id) if h["hour"] == hour_label]

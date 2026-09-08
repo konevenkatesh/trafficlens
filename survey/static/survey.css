@@ -159,3 +159,39 @@
 .topbar .tb.on { background: var(--cc-acc-bg); color: var(--cc-acc); font-weight: 600; }
 /* The bar is 52px of chrome, so the page below it needs less of its own. */
 .wrap { padding-top: 22px; }
+
+
+/* The station as a five-step workflow with a sidebar. One step at a time, in the order a
+   survey is actually done: footage, process, verify, lines, report. The previous page
+   stacked everything -- folder, hour tiles, line, speed, review, report -- and a surveyor
+   read it top to bottom pressing whatever was enabled, which is how detection got run
+   per hour and the same file processed three times. */
+.wf { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 26px;
+      max-width: 1180px; margin: 0 auto; padding: 22px 24px 80px; }
+.wf-side { position: sticky; top: 70px; align-self: start; }
+.wf-side h1 { font-size: 19px; margin: 14px 0 2px; letter-spacing: -.01em; }
+.wf-side .code { font-size: 12px; color: var(--cc-fg-3); margin: 0 0 16px;
+                 font-family: ui-monospace, monospace; }
+.wf-step { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+           border-radius: var(--cc-r-md); color: var(--cc-fg-2); text-decoration: none;
+           font-size: 14px; }
+.wf-step:hover { background: var(--cc-hover); }
+.wf-step .n { width: 24px; height: 24px; border-radius: 50%; display: grid;
+              place-items: center; font-size: 12px; font-weight: 700; flex: none;
+              background: var(--cc-hover); color: var(--cc-fg-3); }
+.wf-step .sub { display: block; font-size: 11.5px; color: var(--cc-fg-3); font-weight: 400; }
+.wf-step.done .n { background: var(--cc-ok); color: #fff; }
+.wf-step.on { background: var(--cc-acc-bg); color: var(--cc-acc); font-weight: 600; }
+.wf-step.on .n { background: var(--cc-acc); color: #fff; }
+.wf-step.locked { opacity: .55; }
+.wf-main > .card { margin-bottom: 14px; }
+.wf-main h2.step { font-size: 22px; margin: 0 0 4px; letter-spacing: -.01em; }
+.wf-main p.lead { color: var(--cc-fg-2); margin: 0 0 18px; }
+.wf .big-cta { padding: 34px 24px; text-align: center; }
+.wf .big-cta .btn { font-size: 15px; padding: 12px 26px; }
+@media (max-width: 880px) {
+  .wf { grid-template-columns: 1fr; }
+  .wf-side { position: static; }
+  .wf-side nav { display: flex; flex-wrap: wrap; gap: 4px; }
+  .wf-step .sub { display: none; }
+}

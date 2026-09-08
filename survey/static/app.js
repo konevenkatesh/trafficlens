@@ -123,53 +123,208 @@ async function viewStations() {
 }
 
 /* ─────────────────────────── one station ─────────────────────────── */
-async function viewStation(id) {
+let STEP = null;   // the step the surveyor is looking at, so polling redraws it and not another
+
+/* Which steps may be opened, and why not. Derived from progress every time -- a stored
+   "you are on step 3" goes stale the moment a file is deleted or a line redrawn. */
+function gates(p) {
+  return {
+    footage: [true, ''],
+    process: [p.files > 0, 'Attach a footage folder first.'],
+    verify:  [p.extracted > 0, 'Process the footage first — there is nothing to check until the model has run.'],
+    lines:   [p.extracted > 0, 'Process the footage first — the lines are drawn on a frame from it.'],
+    report:  [p.line && p.extracted > 0, 'Draw the count line first — nothing is counted until vehicles cross it.'],
+  };
+}
+
+async function viewStation(id, step) {
   const d = await api(`/api/stations/${id}`);
-  if (viewStation._for !== id) { PICKED.clear(); viewStation._for = id; }
-  const p = d.progress, hrs = d.hours;
-  const nextIdx = p.steps.findIndex(s => !s.done);
-  const q = d.queue || {};
+  const p = d.progress, q = d.queue || {};
+  const g = gates(p);
+  const firstOpen = p.steps.findIndex(x => !x.done);
+  const cur = p.steps.some(x => x.key === step) ? step
+            : p.steps[firstOpen >= 0 ? firstOpen : p.steps.length - 1].key;
+  STEP = cur;
 
-  app.innerHTML = `<div class="wrap">
-    <div class="page-head" style="margin-bottom:18px">
-      <div><h1>${esc(d.station.name)}</h1>
-        <p>${esc(d.station.code)}${p.folder ? ` · ${esc(p.folder)}` : ''}</p></div>
-      <a class="btn ghost" href="#stations">All stations</a>
-    </div>
+  const subs = {
+    footage: p.files ? `${p.files} recording(s)` : 'attach a folder',
+    process: p.processed_all ? `${num(p.tracks)} vehicles` : p.pending ? `${p.pending} to run` : '',
+    verify:  p.verified ? `${num(p.verified)} checked` : '',
+    lines:   p.line ? 'count line set' : '',
+    report:  '',
+  };
 
-    <div class="steps">${p.steps.map((s, i) => `
-      <div class="s ${s.done ? 'done' : i === nextIdx ? 'now' : ''}">
-        <div class="n">${s.done ? '✓' : i + 1}</div><div>${esc(s.label)}</div>
-      </div>`).join('')}</div>
-
-    ${(d.failures || []).length ? `<div class="card"
-      style="margin-bottom:14px;border-color:var(--cc-bad)"><div class="card-body">
-      <b>${d.failures.length} recording(s) could not be processed</b>
-      <p class="muted-sm" style="margin:6px 0 0">These hours will stay incomplete until
-        the cause is fixed. Pressing detect again will hit the same error.</p>
-      <ul class="muted-sm" style="margin:8px 0 0;padding-left:18px">
-        ${d.failures.map(f => `<li><b>${esc(f.name)}</b> — ${esc(f.message) || 'no reason recorded'}</li>`).join('')}
-      </ul></div></div>` : ''}
-
-    <div id="stepFolder"></div>
-    ${/* Hours appear as soon as there is footage. They used to be gated behind the count
-          line, which meant a surveyor was asked to draw a line over footage the app had
-          not yet shown them — and if nothing attached, the screen simply ended there
-          with no explanation. */''}
-    ${p.files ? `<div id="stepHours"></div>` : ''}
-    ${p.files ? `<div id="stepLine"></div>` : ''}
-    ${p.files ? `<div id="stepSpeed"></div>` : ''}
-    ${p.tracks ? `<div id="stepAfter"></div>` : ''}
+  app.innerHTML = `<div class="wf">
+    <aside class="wf-side">
+      <a class="btn ghost sm" href="#stations">← All stations</a>
+      <h1>${esc(d.station.name)}</h1>
+      <p class="code">${esc(d.station.code)}</p>
+      <nav>${p.steps.map((x, i) => `
+        <a class="wf-step ${x.key === cur ? 'on' : ''} ${x.done ? 'done' : ''} ${
+            g[x.key][0] ? '' : 'locked'}" href="#station/${id}/${x.key}"
+           title="${g[x.key][0] ? '' : esc(g[x.key][1])}">
+          <span class="n">${x.done ? '✓' : i + 1}</span>
+          <span>${esc(x.label)}${subs[x.key] ? `<span class="sub">${esc(subs[x.key])}</span>` : ''}</span>
+        </a>`).join('')}</nav>
+    </aside>
+    <main class="wf-main" id="wfMain"></main>
   </div>`;
 
-  paintFolder(id, d);
-  if (p.files) paintHours(id, d);
-  if (p.files) paintLine(id, d);
-  if (p.files) paintSpeed(id);
-  if (p.tracks) paintAfter(id, d);
+  const main = $('#wfMain');
+  if (!g[cur][0]) {
+    main.innerHTML = `<div class="card"><div class="card-body" style="padding:36px;text-align:center">
+      <div style="font-size:15px;font-weight:600">This step is not available yet</div>
+      <p class="muted-sm" style="margin:8px auto 0;max-width:460px">${esc(g[cur][1])}</p>
+    </div></div>`;
+  } else if (cur === 'footage') {
+    main.innerHTML = `<h2 class="step">Footage</h2>
+      <p class="lead">The folder of recordings for this station, and when each one was filmed.</p>
+      <div id="stepFolder"></div>`;
+    paintFolder(id, d);
+  } else if (cur === 'process') {
+    main.innerHTML = `<h2 class="step">Process the footage</h2>
+      <p class="lead">Runs the detector over every recording, once. Hours and 15-minute periods are worked out afterwards, in the report.</p>
+      <div id="stepProcess"></div>`;
+    paintProcess(id, d);
+  } else if (cur === 'verify') {
+    main.innerHTML = `<h2 class="step">Verify</h2>
+      <p class="lead">Check the model's classes. Every correction you make here is what the report counts — nothing needs re-running.</p>
+      <div id="stepVerify"></div>`;
+    paintVerify(id, d);
+  } else if (cur === 'lines') {
+    main.innerHTML = `<h2 class="step">Lines</h2>
+      <p class="lead">The count line turns detections into crossings. The speed lines are optional.</p>
+      <div id="stepLine"></div><div id="stepSpeed"></div>`;
+    paintLine(id, d);
+    paintSpeed(id);
+  } else if (cur === 'report') {
+    main.innerHTML = `<h2 class="step">Report</h2>
+      <p class="lead">Counts by class, by hour and by 15-minute period, with PCU — and the annotated video to check them against.</p>
+      <div id="stepReport"></div>`;
+    paintReportStep(id, d);
+  }
 
   clearInterval(POLL);
-  if (q.running || (q.waiting || []).length) POLL = setInterval(() => tick(id), 3000);
+  if ((q.running_all || []).length || q.running || (q.waiting || []).length)
+    POLL = setInterval(() => tick(id), 3000);
+}
+
+/* ── step 2: process, once ── */
+function paintProcess(id, d) {
+  const p = d.progress, q = d.queue || {};
+  const el = $('#stepProcess');
+  const busy = (q.running_all || []).length || q.running || (q.waiting || []).length;
+  const fails = d.failures || [];
+  const failBlock = fails.length ? `<div class="card" style="border-color:var(--cc-bad)">
+      <div class="card-body"><b>${fails.length} recording(s) could not be processed</b>
+      <ul class="muted-sm" style="margin:8px 0 0;padding-left:18px">
+        ${fails.map(f => `<li><b>${esc(f.name)}</b> — ${esc(f.message) || 'no reason recorded'}</li>`).join('')}
+      </ul>
+      <p class="muted-sm" style="margin:10px 0 0">Pressing Process again retries only these — nothing already done is redone.</p>
+      </div></div>` : '';
+
+  if (busy) {
+    el.innerHTML = `<div class="card"><div class="card-body">
+      <b>Processing…</b> <span class="muted-sm">${d.device && d.device.cloud
+        ? 'on a rented GPU — this costs money while it runs' : `on ${esc((d.device || {}).name || 'this computer')}`}</span>
+      <div id="qbar"></div>
+      <p class="muted-sm" style="margin:12px 0 0">You can leave this page; it carries on. The Verify and Lines steps unlock as soon as the first recording finishes.</p>
+    </div></div>${failBlock}`;
+    paintQueue(q);
+    return;
+  }
+
+  if (p.processed_all) {
+    el.innerHTML = `<div class="card" style="border-color:var(--cc-ok)"><div class="card-body" style="display:flex;gap:18px;align-items:center">
+      <div style="flex:1"><b>All ${p.files} recording(s) processed</b>
+        <div class="muted-sm">${num(p.tracks)} vehicles found. This step runs once — the results are kept, and re-running would only repeat the same work.</div></div>
+      <a class="btn primary" href="#station/${id}/verify">Continue to Verify →</a>
+    </div></div>${failBlock}`;
+    return;
+  }
+
+  const est = d.remaining_estimate_s ? mins(d.remaining_estimate_s) : '—';
+  el.innerHTML = `<div class="card big-cta"><div class="card-body">
+      <div class="big">${p.pending}</div>
+      <p class="muted-sm" style="margin:4px 0 14px">recording(s) to process${p.extracted ? ` · ${p.extracted} already done` : ''}</p>
+      <button class="btn primary" id="goProcess">Process all footage</button>
+      <p class="muted-sm" style="margin:14px auto 0;max-width:520px">About <b>${est}</b>${
+        d.device && d.device.cloud ? ' on a rented GPU, which costs money while it runs'
+        : ` on ${esc((d.device || {}).name || 'this computer')}`}.
+        Every file is processed whole, so a 3-hour recording takes 3 hours' worth of work whichever hours you eventually report.</p>
+    </div></div>${failBlock}`;
+  $('#goProcess').onclick = async e => {
+    e.target.disabled = true; e.target.textContent = 'Starting…';
+    try {
+      const r = await api(`/api/stations/${id}/process`, {});
+      toast(r.queued ? `${r.queued} recording(s) queued` : 'Nothing left to process');
+      viewStation(id, 'process');
+    } catch (err) { toast(err.message, true); e.target.disabled = false; e.target.textContent = 'Process all footage'; }
+  };
+}
+
+/* ── step 3: verify ── */
+function paintVerify(id, d) {
+  const p = d.progress;
+  $('#stepVerify').innerHTML = `<div class="grid g2">
+    <div class="card"><div class="card-body">
+      <div class="big">${num(p.tracks)}</div>
+      <p class="muted-sm" style="margin:4px 0 14px">vehicles detected · <b>${num(p.verified)}</b> checked by you</p>
+      <a class="btn primary" href="#review/${id}">Review the critical ones</a>
+      <a class="btn ghost" href="#review/${id}/all" style="margin-left:6px">Review everything</a>
+      <p class="muted-sm" style="margin:12px 0 0">"Critical" means heavy vehicles and anything the model was unsure about — the ones that move the PCU total.</p>
+    </div></div>
+    <div class="card"><div class="card-body">
+      <b>How corrections reach the report</b>
+      <p class="muted-sm" style="margin:8px 0 0">When you reclassify a vehicle, the report counts your class, not the model's, from that moment on. There is no save button and nothing to re-run. If you have already drawn the lines, the numbers on the Report step are already updated.</p>
+      <p class="muted-sm" style="margin:8px 0 0">Corrections are kept per station and never change the model — the next station starts from the same detector.</p>
+    </div></div>
+  </div>
+  <p style="margin-top:6px"><a class="btn ghost" href="#station/${id}/lines">Continue to Lines →</a></p>`;
+}
+
+/* ── step 5: the report, with the video to check it against ── */
+async function paintReportStep(id, d) {
+  const p = d.progress;
+  const el = $('#stepReport');
+  const vids = [];
+  (d.hours || []).forEach(h => (h.files || []).forEach(f => { if (f.tracks && !vids.includes(f.video_id)) vids.push(f.video_id); }));
+  el.innerHTML = `<div class="grid g3" style="margin-bottom:14px">
+      <div class="card"><div class="card-body"><div class="big">${num(p.tracks)}</div><div class="muted-sm">vehicles detected</div></div></div>
+      <div class="card"><div class="card-body"><div class="big">${(d.hours || []).length}</div><div class="muted-sm">clock hours covered</div></div></div>
+      <div class="card"><div class="card-body"><div class="big">${num(p.verified)}</div><div class="muted-sm">checked by you</div></div></div>
+    </div>
+    <div class="card"><div class="card-body" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <div style="flex:1"><b>The report</b><div class="muted-sm">By class, by hour and by 15-minute period, with PCU. The Excel sheet records where every start time came from.</div></div>
+      <a class="btn primary" href="#report/${id}">Open report</a>
+      <a class="btn ghost" href="/api/stations/${id}/report.xlsx">Download Excel</a>
+    </div></div>
+    <div class="card"><div class="card-body">
+      <b>Preview video</b>
+      <div class="muted-sm" style="margin:4px 0 12px">Boxes, classes, the count line and the running total drawn onto the footage — the way to believe a number is to watch the vehicle cross the line.</div>
+      <div id="vidPrev">${vids.length ? '<span class="muted-sm">checking…</span>' : '<span class="muted-sm">No processed recording yet.</span>'}</div>
+    </div></div>`;
+  if (!vids.length) return;
+  const vid = vids[0];
+  let st; try { st = await api(`/api/clips/${vid}/render_state`, undefined, 'GET'); } catch { return; }
+  const pv = $('#vidPrev'); if (!pv) return;
+  if (st.ready) {
+    pv.innerHTML = `<video controls preload="metadata" style="width:100%;max-height:480px;background:#000;border-radius:var(--cc-r-md)"
+        src="/api/clips/${vid}/annotated.mp4"></video>
+      ${st.stale ? `<p class="muted-sm" style="color:var(--cc-warn-fg);margin:8px 0 0">Made before your latest corrections — <button class="btn sm ghost" data-annot="${vid}">Remake</button></p>` : ''}
+      <p class="muted-sm" style="margin:8px 0 0">One recording of ${vids.length}. Videos for the others are on the full report page.</p>`;
+  } else if (st.job === 'running' || st.job === 'waiting') {
+    pv.innerHTML = `<button class="btn ghost" disabled>${st.job === 'running' ? `Rendering ${Math.round(st.progress || 0)}%` : 'Waiting its turn…'}</button>`;
+    const b = pv.querySelector('button'); watchRender(vid, b);
+  } else {
+    pv.innerHTML = `<button class="btn secondary" data-annot="${vid}">Make the preview video</button>
+      <span class="muted-sm" style="margin-left:10px">A few minutes; it queues behind any processing still running.</span>`;
+  }
+  pv.querySelectorAll('[data-annot]').forEach(b => b.onclick = async () => {
+    const was = b.textContent; b.disabled = true; b.textContent = 'Queued…';
+    try { await api(`/api/clips/${b.dataset.annot}/annotate`, {}); watchRender(+b.dataset.annot, b); }
+    catch (e) { toast(e.message, true); b.disabled = false; b.textContent = was; }
+  });
 }
 
 /* ── step 1: the folder ── */
@@ -394,7 +549,11 @@ async function paintSpeed(id) {
         t ? 'Change' : 'Set up speed'}</button>
     </div>
 
-    ${s.n ? `<div class="grid g4" style="margin-top:16px">
+    ${s.n ? `<p class="muted-sm" style="margin:12px 0 0">Method: <b>${d.method === 'trajectory'
+        ? 'whole trajectory (with carriageway width)' : 'two lines only'}</b>${
+        d.cross_check && d.cross_check.n ? ` · cross-checked on ${d.cross_check.n} vehicles, ratio ${d.cross_check.trajectory_over_trap}` : ''}${
+        d.method !== 'trajectory' ? ' — add the carriageway width to measure ~3× more vehicles' : ''}</p>
+    <div class="grid g4" style="margin-top:12px">
       ${[['Median', s.median], ['85th percentile', s.p85], ['15th', s.p15],
          ['Vehicles', s.n]].map(([k, v]) => `<div>
         <div class="big" style="font-size:22px">${v}${k === 'Vehicles' ? '' : ''}</div>
@@ -434,6 +593,13 @@ function openTrap(id, trap) {
                style="margin-top:6px" value="${trap ? trap.metres : ''}" placeholder="e.g. 25">
         <p class="muted-sm" style="margin:6px 0 0">Measured on the road, not estimated from
           the picture. At 25 m, half a metre of error is 2%; at 9 m it is 5.6%.</p></div>
+      <div><label class="lbl">Carriageway width between the line ends (metres)</label>
+        <input class="field sm" id="trapW" type="number" min="2" max="60" step="0.1"
+               style="margin-top:6px" value="${trap && trap.width_m ? trap.width_m : ''}" placeholder="e.g. 7">
+        <p class="muted-sm" style="margin:6px 0 0">With the width, every tracked position becomes
+          metres and speed comes from the whole track — about three times as many vehicles
+          measured, and the motorcycles are no longer lost. Both lines must span exactly
+          this width.</p></div>
       <div><label class="lbl">Speed you expect here (km/h, optional)</label>
         <input class="field sm" id="trapE" type="number" min="10" max="150" step="1"
                style="margin-top:6px" value="${trap && trap.expected_kmh ? trap.expected_kmh : ''}"
@@ -448,9 +614,10 @@ function openTrap(id, trap) {
         if (ls.length !== 2) return toast('Draw exactly two lines across the road', true);
         if (!m || m < 2) return toast('Enter the distance between the lines in metres', true);
         const ex = parseFloat($('#trapE').value);
+        const wd = parseFloat($('#trapW').value);
         try {
           await api(`/api/stations/${id}/speed`,
-            { a: ls[0], b: ls[1], metres: m, expected_kmh: ex || null });
+            { a: ls[0], b: ls[1], metres: m, expected_kmh: ex || null, width_m: wd || null });
           closeModal(); toast('Speed measurement set up'); viewStation(id);
         } catch (e) { toast(e.message, true); }
       } }], 'wide');
@@ -496,115 +663,6 @@ let ED = null;
    rented GPU it also began spending money. Now clicking chooses, and one Run button
    starts what has been chosen. The set lives outside the render so a poll redrawing the
    grid does not lose the selection mid-choice. */
-let PICKED = new Set();
-
-function paintHours(id, d) {
-  const el = $('#stepHours');
-  const q = d.queue || {};
-  const busyId = q.running ? q.running.video_id : null;
-  const waiting = new Set((q.waiting || []).map(w => w.video_id));
-  const speed = d.device.speed || 1;
-
-  const stateOf = h => h.files.some(f => f.video_id === busyId || waiting.has(f.video_id))
-    ? 'busy' : h.state;
-  // An hour that finished or is already working cannot be picked, so a stale tick from
-  // before it started must not survive into the Run.
-  d.hours.forEach(h => { if (stateOf(h) !== 'todo' && stateOf(h) !== 'part') PICKED.delete(h.hour); });
-
-  const pickable = d.hours.filter(h => ['todo', 'part'].includes(stateOf(h)));
-  const chosen = pickable.filter(h => PICKED.has(h.hour));
-  const mn = chosen.reduce((a, h) => a + h.minutes, 0);
-  // What will actually be decoded: whole files, each counted once. Detection never
-  // processes part of a recording, so a 3-hour file selected in one hour costs three
-  // hours of work. Adding up the per-hour coverage told the surveyor otherwise.
-  const seenV = new Set();
-  let workMin = 0, longFiles = [];
-  chosen.forEach(h => (h.files || []).forEach(f => {
-    if (f.tracks || seenV.has(f.video_id)) return;
-    seenV.add(f.video_id);
-    workMin += (f.file_seconds || f.seconds_here || 0) / 60;
-    if ((f.spans_hours || 1) > 1) longFiles.push(f);
-  }));
-
-  el.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="card-body">
-    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
-      <h2 style="margin:0;font-size:17px">Footage by hour</h2>
-      <span class="muted-sm" style="flex:1">Tick the hours you want, then press Run.
-        Nothing starts on its own.</span>
-      ${pickable.length ? `<button class="btn sm ghost" id="pickAll">${
-        chosen.length === pickable.length ? 'Clear all' : 'Select all'}</button>` : ''}
-    </div>
-    <div id="qbar"></div>
-    <div class="hours" style="margin-top:12px">${d.hours.map(h => {
-      const state = stateOf(h);
-      const on = PICKED.has(h.hour);
-      const pct = h.total ? Math.round(100 * h.extracted / h.total) : 0;
-      return `<button class="hr ${state === 'done' ? 'done' : ''}
-                ${state === 'busy' ? 'busy' : ''} ${on ? 'picked' : ''}"
-                data-hour="${esc(h.hour)}"
-                ${state === 'done' || state === 'busy' ? 'disabled' : ''}>
-        <div class="t">${on ? '<span class="tick">✓</span> ' : ''}${esc(h.label)}${
-          h.night ? '<span class="night">night</span>' : ''}</div>
-        <div class="d">${h.minutes} min filmed${h.coverage < 0.99
-          ? ` · ${Math.round(h.coverage * 100)}% of the hour` : ''}</div>
-        <div class="bar"><i style="width:${pct}%"></i></div>
-        <div class="cta">${state === 'done' ? '✓ done'
-          : state === 'busy' ? 'working…'
-          : on ? 'selected'
-          : state === 'part' ? `finish (${h.total - h.extracted} left)`
-          : `≈${mins(h.minutes * 60 / speed)}`}</div>
-      </button>`;
-    }).join('')}</div>
-
-    ${chosen.length ? `<div class="runbar">
-      <div style="flex:1"><b>${chosen.length} hour${chosen.length > 1 ? 's' : ''} selected</b>
-        <span class="muted-sm">${Math.round(workMin)} min of footage · about ${
-          mins(workMin * 60 / speed)}${
-          d.device.cloud ? ' on a rented GPU, which costs money' : ''}</span>
-        ${longFiles.length ? `<div class="muted-sm" style="color:var(--cc-warn-fg)">
-          ${longFiles.length} of these recording(s) run longer than an hour — the whole
-          file is processed, not just the part inside the hour you ticked. That is why the
-          estimate is larger than ${mn} min.</div>` : ''}</div>
-      <button class="btn ghost sm" id="pickNone">Clear</button>
-      <button class="btn primary" id="runPicked">Run ${chosen.length} hour${
-        chosen.length > 1 ? 's' : ''}</button>
-    </div>` : ''}
-  </div></div>`;
-
-  el.querySelectorAll('[data-hour]').forEach(b => b.onclick = () => {
-    const h = b.dataset.hour;
-    PICKED.has(h) ? PICKED.delete(h) : PICKED.add(h);
-    paintHours(id, d);                     // selection only — nothing is sent
-  });
-  const all = $('#pickAll');
-  if (all) all.onclick = () => {
-    if (chosen.length === pickable.length) PICKED.clear();
-    else pickable.forEach(h => PICKED.add(h.hour));
-    paintHours(id, d);
-  };
-  const none = $('#pickNone');
-  if (none) none.onclick = () => { PICKED.clear(); paintHours(id, d); };
-
-  const run = $('#runPicked');
-  if (run) run.onclick = async () => {
-    run.disabled = true; run.textContent = 'Starting…';
-    const hours = chosen.map(h => h.hour);
-    try {
-      // Sequentially, so a rejection names the hour it belongs to rather than failing
-      // the whole batch anonymously.
-      for (const h of hours) {
-        await api(`/api/stations/${id}/hours/${encodeURIComponent(h)}/extract`, {});
-      }
-      PICKED.clear();
-      toast(`Started ${hours.length} hour${hours.length > 1 ? 's' : ''} — you can leave this running`);
-      viewStation(id);
-    } catch (e) {
-      toast(e.message, true);
-      run.disabled = false; run.textContent = `Run ${hours.length} hours`;
-    }
-  };
-  paintQueue(d.queue);
-}
 
 function paintQueue(q) {
   const el = $('#qbar');
@@ -645,11 +703,11 @@ async function tick(id) {
   const q = await api('/api/queue', undefined, 'GET').catch(() => null);
   if (!q) return;
   const all = q.running_all || (q.running ? [q.running] : []);
-  if (!all.length && !(q.waiting || []).length) { clearInterval(POLL); return viewStation(id); }
+  if (!all.length && !(q.waiting || []).length) { clearInterval(POLL); return viewStation(id, STEP); }
   const bars = document.querySelectorAll('[data-qfill]');
   // The number of running clips changes as the pool drains; a full repaint is the only
   // honest way to add or remove a bar.
-  if (bars.length !== all.length) return viewStation(id);
+  if (bars.length !== all.length) return viewStation(id, STEP);
   all.forEach((r, i) => {
     const f = document.querySelector(`[data-qfill="${i}"]`);
     const t = document.querySelector(`[data-qsub="${i}"]`);
@@ -660,48 +718,6 @@ async function tick(id) {
 }
 
 /* ── steps 4 & 5: review and report ── */
-function paintAfter(id, d) {
-  const p = d.progress;
-
-  /* Detection and counting are different things, and the gap between them is the line.
-     The detector has found every vehicle in the footage; none of them has "crossed"
-     anything until there is a line to cross. Showing Review and Report before that
-     would offer two buttons that come back empty and explain nothing. */
-  if (!p.line) {
-    $('#stepAfter').innerHTML = `<div class="card" style="border-color:var(--cc-acc)">
-      <div class="card-body" style="text-align:center;padding:28px">
-        <div class="big">${num(p.tracks)}</div>
-        <p class="muted-sm" style="margin:4px 0 0">vehicles found in the footage</p>
-        <p style="margin:14px 0 0;max-width:520px;margin-inline:auto">
-          None of them is <b>counted</b> yet. A vehicle counts when it crosses the line,
-          so nothing can be reviewed or reported until you draw one.</p>
-        <button class="btn primary" id="afterLine" style="margin-top:14px">
-          Draw the count line</button>
-      </div></div>`;
-    const b = $('#afterLine');
-    if (b) b.onclick = () => openLine(id, d.line || []);
-    return;
-  }
-
-  $('#stepAfter').innerHTML = `<div class="grid g2">
-    <div class="card"><div class="card-body">
-      <h2 style="margin:0 0 4px;font-size:17px">Check the model's work</h2>
-      <p class="muted-sm" style="margin:0 0 12px">${num(p.tracks)} vehicles detected,
-        ${num(p.verified)} checked by you. Start with the ones that matter most —
-        heavy vehicles and anything the model was unsure about.</p>
-      <a class="btn primary" href="#review/${id}">Review</a>
-      <a class="btn ghost" href="#review/${id}/all">Review everything</a>
-    </div></div>
-    <div class="card"><div class="card-body">
-      <h2 style="margin:0 0 4px;font-size:17px">Report</h2>
-      <p class="muted-sm" style="margin:0 0 12px">Vehicle counts by class and by
-        15-minute period, with PCU.</p>
-      <a class="btn primary" href="#report/${id}">Open report</a>
-      <a class="btn ghost" href="/api/stations/${id}/report.xlsx">Download Excel</a>
-    </div></div>
-  </div>`;
-}
-
 /* Keys for the six classes that run past 1-9.
    Mnemonic where possible, and checked against the keys already taken (A attribute,
    X reject, U unclear, Enter confirm) — a shortcut that shadows another is worse than
@@ -1349,7 +1365,7 @@ async function route() {
   try {
     if (name === 'settings') return await viewSettings();
     if (name === 'runs') return await viewRuns();
-    if (name === 'station' && a) return await viewStation(+a);
+    if (name === 'station' && a) return await viewStation(+a, b);
     if (name === 'review' && a) return await viewReview(+a, b);
     if (name === 'report' && a) return await viewReport(+a);
     return await viewStations();

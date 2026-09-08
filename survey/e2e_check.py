@@ -86,13 +86,14 @@ def main():
          lambda: len(urllib.request.urlopen(
              f"{BASE}/api/stations/{sid}/frame?at=0.3", timeout=120).read()))
 
-    # The hour label is "2026-01-01 12:00" — it has a space in it, so it has to be
-    # encoded before it goes in a path. urllib refuses a raw one outright, which is how
-    # this was caught; a client that quietly sent it would have got a 404 instead.
-    hour = hours[0]["hour"]
-    step(f"extract {hour}",
-         lambda: api(f"/api/stations/{sid}/hours/"
-                     f"{urllib.parse.quote(hour)}/extract", {}))
+    # One action over every file. The hourly extract endpoint still exists, but the app no
+    # longer offers it: detection is per file, so hour-by-hour selection only pretended to
+    # be a choice. Pressing process twice must not queue anything the second time.
+    r1 = step("process all footage", lambda: api(f"/api/stations/{sid}/process", {}))
+    r2 = step("process again queues nothing",
+              lambda: api(f"/api/stations/{sid}/process", {}))
+    if r2 is not None and r2.get("queued"):
+        FAILED.append(f"second process call queued {r2['queued']} file(s) again")
 
     # Extraction is CPU-only on a runner: roughly 2.5x the clip's own length.
     def wait():
