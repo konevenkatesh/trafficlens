@@ -44,9 +44,9 @@ def sample_tracks(video_id, n=80, min_h=28):
 
 def get_frame_jpg(video_id, frame_idx):
     v = db.one("SELECT path FROM videos WHERE id=?", video_id)
+    import timing
     cap = cv2.VideoCapture(v["path"])
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
-    ok, frame = cap.read()
+    ok, frame = timing.read_frame(cap, video_id, int(frame_idx))
     cap.release()
     if not ok:
         return None
@@ -101,9 +101,9 @@ def judge_sample(video_id, job_id, n=80):
         items = [s for s in sample_tracks(video_id, n=n * 2, min_h=28) if s["track_id"] not in done][:n]
         cap = cv2.VideoCapture(v["path"])
         ok_n = 0
+        import timing
         for k, it in enumerate(items):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(it["frame"]))
-            ok, frame = cap.read()
+            ok, frame = timing.read_frame(cap, video_id, int(it["frame"]))
             if not ok:
                 continue
             x1, y1, x2, y2 = [int(x) for x in it["box"]]

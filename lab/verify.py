@@ -253,9 +253,10 @@ def crop(video_id, track_id):
     # than the latest completed extraction for this video is regenerated.
     if cp.exists() and xp.exists() and cp.stat().st_mtime >= _extracted_at(video_id):
         return str(cp), str(xp)
+    import timing
+    timing.ensure(video_id)            # first crop of an unmapped clip pays for the scan
     cap = cv2.VideoCapture(v["path"])
-    cap.set(cv2.CAP_PROP_POS_FRAMES, b["frame"])
-    ok, img = cap.read()
+    ok, img = timing.read_frame(cap, video_id, b["frame"])
     cap.release()
     if not ok or img is None:
         return None, None

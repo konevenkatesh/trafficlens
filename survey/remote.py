@@ -923,6 +923,9 @@ def _ingest(video_id, model_id, res):
         "t_start,t_end,n_points,model_id) VALUES (?,?,?,?,NULL,?,?,?,?)",
         [(video_id, t["track_id"], t["cls"], db.jdump(t["votes"]),
           t["t_start"], t["t_end"], t["n_points"], model_id) for t in res["tracks"]])
+    if res.get("frame_ms"):
+        import timing
+        timing.save(video_id, res["frame_ms"])
 
 
 def in_use():

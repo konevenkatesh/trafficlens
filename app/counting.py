@@ -3,6 +3,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 import db
+import timing
 from engine import CLASSES
 
 
@@ -183,10 +184,12 @@ def count_video(video_id, lines, birth_lookback_s=None):
                     stack.append((f, d))
             pos = {f: (px, py) for f, px, py in path}
             for f, d in stack:
-                ts = start + timedelta(seconds=f / v["fps"])
+                # Stream time, not frame / fps: see timing.py for the minute this drifts.
+                secs = timing.seconds(video_id, f, v["fps"])
+                ts = start + timedelta(seconds=secs)
                 px, py = pos.get(f, (0, 0))
                 events.append({"frame": f, "clock": ts.strftime("%H:%M:%S"),
-                               "time_s": round(f / v["fps"], 2), "track_id": tid,
+                               "time_s": round(secs, 2), "track_id": tid,
                                "class": CLASSES[cls], "line": ln["name"],
                                "direction": d, "px": round(px), "py": round(py)})
     events.sort(key=lambda e: e["frame"])

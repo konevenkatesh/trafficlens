@@ -118,6 +118,17 @@ def main():
                   f"unfinished upload(s) from the bucket", flush=True)
     except Exception as e:
         print(f"  WARNING: could not check for running GPU pods: {e}", flush=True)
+    try:
+        # Recordings detected before frame-time maps existed get theirs now, in the
+        # background, a minute or two each: their crops and crossing times were being
+        # read by frame number, which this DVR footage makes a minute wrong.
+        import timing
+        if timing.missing():
+            print(f"  reading the clock of {len(timing.missing())} recording(s) in the "
+                  f"background", flush=True)
+            timing.backfill_in_background()
+    except Exception as e:
+        print(f"  WARNING: frame-time backfill did not start: {e}", flush=True)
 
 
     # A pod does not stop when the app does. Measured: an exited container is restarted by

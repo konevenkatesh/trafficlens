@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS track_points (
   x1 REAL, y1 REAL, x2 REAL, y2 REAL, conf REAL
 );
 CREATE INDEX IF NOT EXISTS idx_points ON track_points (video_id, track_id, frame);
+CREATE TABLE IF NOT EXISTS frame_times (
+  video_id INTEGER PRIMARY KEY, n INTEGER, ms BLOB, made REAL
+);
 CREATE TABLE IF NOT EXISTS box_reviews (
   video_id INTEGER, track_id INTEGER, frame INTEGER, verdict TEXT, new_class INTEGER, ts REAL,
   PRIMARY KEY (video_id, track_id)

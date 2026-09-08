@@ -174,6 +174,15 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
         buf = []
         t0 = time.time()
         stride = stride_for(v["fps"])
+        # Frame number -> stream time, made beside detection (see timing.py). Without it
+        # every crop and every crossing time divides by the frame rate, which on a DVR
+        # recording that dropped frames is a minute out by the end of the clip.
+        import timing
+        _times = {}
+        _scan = threading.Thread(
+            target=lambda: _times.update(ms=timing.scan(v["path"], stop=ABORT.is_set)),
+            daemon=True)
+        _scan.start()
         dev = device()
         results = model.track(source=v["path"], stream=True, persist=True,
                               tracker=str(TRACKER), conf=conf, imgsz=imgsz,
@@ -211,6 +220,9 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
             [(video_id, tid, votes[tid].most_common(1)[0][0], db.jdump(dict(votes[tid])),
               span[tid][0], span[tid][1], sum(votes[tid].values()), use_id)
              for tid in votes])
+        _scan.join(timeout=600)
+        if _times.get("ms"):
+            timing.save(video_id, _times["ms"])
         import dedup as dedup_mod
         d = dedup_mod.dedup(video_id)
         db.run("UPDATE jobs SET status='done', progress=100, finished=?, message=? WHERE id=?",

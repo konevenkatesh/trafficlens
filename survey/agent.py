@@ -197,6 +197,23 @@ def _extract(job):
         STATE.update(phase="loading", pct=0.0, message="loading the detector",
                      error=None, result=None, started=time.time())
 
+    # Frame number -> stream millisecond for every frame the decoder returns, made
+    # beside detection on a spare core. The app needs it to cut the right frame and to
+    # clock crossings: this DVR drops frames while recording, so frame / fps drifts a
+    # minute per hour. grab() parses without converting pixels; ~20 s per hour of video.
+    times = {}
+
+    def _scan():
+        import cv2
+        cap = cv2.VideoCapture(str(video))
+        ms = []
+        while cap.grab():
+            ms.append(int(round(cap.get(cv2.CAP_PROP_POS_MSEC))))
+        cap.release()
+        times["ms"] = ms
+    scan = threading.Thread(target=_scan, daemon=True)
+    scan.start()
+
     # Imported here, after the recording is in hand, so that a recording that failed to
     # arrive is reported as that and not as whatever the detector's import says first.
     from ultralytics import YOLO
@@ -250,10 +267,12 @@ def _extract(job):
         pass
     print(f"done: {len(tracks)} vehicles, {len(points)} boxes in "
           f"{time.time() - t0:.0f}s", flush=True)
+    scan.join(timeout=600)
     with LOCK:
         STATE.update(phase="done", pct=100.0, error=None,
                      message=f"{len(tracks)} vehicles, {len(points)} boxes",
                      result={"tracks": tracks, "points": points,
+                             "frame_ms": times.get("ms") or [],
                              "seconds": round(time.time() - t0, 1)})
 
 

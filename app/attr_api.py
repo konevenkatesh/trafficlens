@@ -67,9 +67,9 @@ def save_attr(video_id, track_id, attr, value, source):
            video_id, track_id, attr, value, source)
 
 
-def _crop_b64(video_path, cap, frame_idx, box):
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
-    ok, frame = cap.read()
+def _crop_b64(video_id, cap, frame_idx, box):
+    import timing
+    ok, frame = timing.read_frame(cap, video_id, int(frame_idx))
     if not ok:
         return None
     x1, y1, x2, y2 = [int(v) for v in box]
@@ -98,7 +98,7 @@ def judge_attr(video_id, attr, job_id):
         for k, it in enumerate(items):
             imgs = []
             for view in it["views"]:
-                b64 = _crop_b64(v["path"], cap, view["frame"], view["box"])
+                b64 = _crop_b64(video_id, cap, view["frame"], view["box"])
                 if b64:
                     imgs.append({"type": "image_url",
                                  "image_url": {"url": "data:image/jpeg;base64," + b64}})

@@ -241,9 +241,9 @@ def _render(c, margin=0.10):
     v = db.one("SELECT path FROM videos WHERE id=?", c["video_id"])
     if not v:
         return None, None
+    import timing
     cap = cv2.VideoCapture(v["path"])
-    cap.set(cv2.CAP_PROP_POS_FRAMES, c["frame"])
-    ok, img = cap.read()
+    ok, img = timing.read_frame(cap, c["video_id"], c["frame"])
     cap.release()
     if not ok or img is None:
         return None, None
