@@ -1363,7 +1363,8 @@ async function liveTick() {
   // Phases newest first: the answer to "what is taking so long" is usually here, and the
   // upload rate is the number that decides whether the cloud was worth it.
   const ph = (d.phases || []).slice().reverse().slice(0, 6).map(p => {
-    const label = { boot: 'Started GPU', upload: 'Sent', detect: 'Detected' }[p.kind] || p.kind;
+    const label = { boot: 'Started GPU', upload: 'Sent', copy: 'Copied to GPU disk',
+                    detect: 'Detected' }[p.kind] || p.kind;
     const extra = p.mbps ? ` · ${p.mbps} MB/s` : '';
     return `<div class="live-ph"><span class="n">${label} ${esc(p.detail || '')}${extra}</span>
       <span class="d">${p.seconds != null ? mins(p.seconds) : ''}</span></div>`;

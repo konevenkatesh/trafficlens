@@ -106,6 +106,53 @@ def _fetch(url, dest, total_hint=0):
     raise RuntimeError(f"could not fetch {dest.name} from the bucket after 5 attempts")
 
 
+def _copy_local(src, dst):
+    """Copy a recording from the mounted volume to this pod's disk, reporting as it goes.
+
+    Skipped when a copy of the same size is already here (a retry after a failure).
+    The rate is kept in STATE so the app can list the copy as a finished phase.
+    """
+    total = src.stat().st_size
+    with LOCK:
+        STATE["copy"] = None            # never report the previous clip's copy
+    if dst.exists() and dst.stat().st_size == total:
+        print(f"{dst.name} already on local disk", flush=True)
+        with LOCK:
+            STATE["copy"] = {"seconds": 0, "mb": round(total / 1e6, 1), "mbps": 0}
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_suffix(dst.suffix + ".part")
+    t0 = last = time.time()
+    done = 0
+    with LOCK:
+        STATE.update(phase="copying", pct=0.0, error=None, result=None,
+                     message=f"copying {src.name} from storage to the GPU's disk",
+                     started=t0)
+    print(f"copying {src.name} ({total / 1e6:.0f} MB) from the volume", flush=True)
+    with open(src, "rb") as f, open(tmp, "wb") as g:
+        while True:
+            chunk = f.read(16 << 20)
+            if not chunk:
+                break
+            g.write(chunk)
+            done += len(chunk)
+            now = time.time()
+            if now - last > 2:
+                last = now
+                rate = done / max(now - t0, 1e-6) / 1e6
+                with LOCK:
+                    STATE.update(message=f"copying {src.name} from storage — "
+                                         f"{done / 1e6:.0f} of {total / 1e6:.0f} MB "
+                                         f"at {rate:.0f} MB/s")
+    tmp.replace(dst)
+    secs = time.time() - t0
+    rate = total / 1e6 / max(secs, 1e-6)
+    print(f"copied in {secs:.0f}s at {rate:.0f} MB/s", flush=True)
+    with LOCK:
+        STATE.update(copy={"seconds": round(secs, 1), "mb": round(total / 1e6, 1),
+                           "mbps": round(rate, 1)})
+
+
 def _extract(job):
     """Track one video and leave the result in STATE.
 
@@ -129,9 +176,17 @@ def _extract(job):
     stride = int(job.get("stride") or 1)
     frames = int(job.get("frames") or 0)
 
-    if job.get("video_path") and not video.exists():
-        raise FileNotFoundError(f"{video} is not on the mounted volume — is the pod in "
-                                f"the volume's datacenter?")
+    if job.get("video_path"):
+        if not video.exists():
+            raise FileNotFoundError(f"{video} is not on the mounted volume — is the pod in "
+                                    f"the volume's datacenter?")
+        # Copy it to the pod's own disk first. Decoding straight off the network volume
+        # left the GPU at 22% busy and the CPU at 15% on the first real run: neither was
+        # the limit, the read across RunPod's internal network was. One sequential copy
+        # is fast; a decoder's thousands of small reads over that link are not.
+        local = WORK / "video" / video.name
+        _copy_local(video, local)
+        video = local
     if job.get("video_url"):
         with LOCK:
             STATE.update(phase="fetching", pct=0.0, message=f"fetching {video.name}",
@@ -188,11 +243,11 @@ def _extract(job):
     # The clip is consumed; the results are in memory and about to be collected. Dropping
     # it here rather than waiting to be told means a survey cannot fill the container disk
     # just because the app died between finishing a clip and tidying up after it.
-    if not job.get("video_path"):        # the app deletes volume objects itself
-        try:
-            video.unlink()
-        except OSError:
-            pass
+    # `video` is always the local copy here; the volume object is the app's to delete.
+    try:
+        video.unlink()
+    except OSError:
+        pass
     print(f"done: {len(tracks)} vehicles, {len(points)} boxes in "
           f"{time.time() - t0:.0f}s", flush=True)
     with LOCK:
@@ -274,6 +329,7 @@ class H(BaseHTTPRequestHandler):
             import shutil
             with LOCK:
                 out = {k: STATE[k] for k in ("phase", "pct", "message", "error")}
+                out["copy"] = STATE.get("copy")
             # Reported on every poll because the app now sends the next clip while this
             # one runs. Two recordings at a gigabyte each is comfortable; a leak that
             # keeps every clip of a station day is not, and "no space left on device"

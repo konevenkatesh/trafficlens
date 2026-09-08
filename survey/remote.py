@@ -833,6 +833,7 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
 
         t_detect = time.time()
         last_beat = time.time()
+        copy_noted = False
         while True:
             time.sleep(4)
             import engine as _e
@@ -842,6 +843,15 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
             p = _call(pod, "/progress")
             if p.get("phase") == "error":
                 raise RuntimeError(p.get("error") or "the GPU reported a failure")
+            # The volume-to-local-disk copy, once the agent reports it done: listed as a
+            # phase of its own with its rate, because that rate is the number that says
+            # whether the volume read was the bottleneck.
+            if p.get("copy") and not copy_noted:
+                copy_noted = True
+                c = p["copy"]
+                note_phase("copy", Path(v["path"]).name, seconds=c.get("seconds"),
+                           mb=c.get("mb"), mbps=c.get("mbps"))
+                t_detect = time.time()     # detection proper starts after the copy
             if p.get("phase") == "done":
                 break
             free = p.get("free_gb")
