@@ -1343,7 +1343,8 @@ async function liveTick() {
   const c = d.cloud;
   const pod = c && c.pods && c.pods[0];
   const rows = [];
-  rows.push(['Running on', c ? `rented ${esc((c.gpu || '').replace('NVIDIA GeForce ', ''))}`
+  const card = (pod && pod.gpu) || (c && c.gpu) || '';
+  rows.push(['Running on', c ? `rented ${esc(card.replace('NVIDIA GeForce ', '').replace('NVIDIA ', ''))}`
                              : esc((d.device || {}).name || 'this computer')]);
   if (running.length) {
     const r = running[0];

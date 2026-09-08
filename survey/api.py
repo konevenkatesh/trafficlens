@@ -366,8 +366,12 @@ def extract_hour(site_id: int, hour: str, body: HourIn | None = None):
     return {**r, "queue": work.queue_state()}
 
 
-@app.get("/api/queue")
-def queue():
+def _queue_with_progress():
+    """The queue, with each running job's progress from the jobs table.
+
+    Shared by /api/queue and /api/activity. The live panel read the bare queue state and
+    showed 0% for a clip the Process page had at 70% -- same job, two answers.
+    """
     q = work.queue_state()
     # Several clips can be detecting at once now, so every one of them needs its own
     # progress. Matched on job KIND as well as video: hardcoding 'extract' meant a render
@@ -385,6 +389,11 @@ def queue():
     ra = q.get("running_all") or []
     q["running"] = ra[0] if ra else None      # older single-job callers still work
     return q
+
+
+@app.get("/api/queue")
+def queue():
+    return _queue_with_progress()
 
 
 @app.post("/api/queue/cancel")
@@ -413,7 +422,7 @@ def activity():
     it varies fourfold between hosts and it, not the GPU, usually decides whether the
     cloud was worth using.
     """
-    q = work.queue_state()
+    q = _queue_with_progress()
     out = {"queue": q, "device": work.device_note(), "phases": [], "cloud": None}
     try:
         import remote
@@ -424,9 +433,13 @@ def activity():
             live = st.get("running") or []
             out["cloud"] = {
                 "ok": st.get("ok"), "gpu": st.get("gpu"),
+                # The card actually rented, from the ledger -- not the Settings choice,
+                # which is a preference the datacenter may not have honoured.
                 "pods": [{"id": p["id"], "uptime_s": p["uptime_s"],
                           "cost_per_hr": p["cost_per_hr"],
-                          "spent_so_far": p["spent_so_far"]} for p in live],
+                          "spent_so_far": p["spent_so_far"],
+                          "gpu": (db.one("SELECT gpu FROM cloud_runs WHERE pod_id=?",
+                                         p["id"]) or {}).get("gpu")} for p in live],
                 "spend": st.get("spend"), "error": st.get("error"),
             }
     except Exception as e:
