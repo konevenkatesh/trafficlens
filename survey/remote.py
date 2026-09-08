@@ -73,7 +73,11 @@ CHUNK = 4 << 20
 # through fine. Parts also make a dropped connection cost one part instead of the file.
 PART = 32 << 20
 PART_TRIES = 4
-UPLOAD_TIMEOUT = 7200         # a 1GB station recording on a bad line
+# Per-PART, not per-file, and sized to the part: a 32MB part that has not finished in five
+# minutes is stalled, not slow, and must fail so it can be retried on a fresh connection.
+# The old value of two hours applied to each part, so a proxy that stopped forwarding a
+# body mid-way -- which it does -- hung the surveyor for two hours per part.
+UPLOAD_TIMEOUT = 300
 LOCK = threading.Lock()
 # Uploads are serialised. Two at once share the same link and finish no sooner, and the
 # per-pod record of what has been sent would need locking anyway.
@@ -409,9 +413,13 @@ def _put_part(pod, rel, body, offset, total, name):
     host = _url(pod["id"]).replace("https://", "")
     last = None
     for attempt in range(1, PART_TRIES + 1):
-        conn = http.client.HTTPSConnection(host, timeout=UPLOAD_TIMEOUT, blocksize=CHUNK)
+        # Floor of 60s, then 2.5s per MB: allows a part at 0.4 MB/s, fails a stalled one.
+        per_part = max(60, int(len(body) / 1e6 * 2.5))
+        conn = http.client.HTTPSConnection(host, timeout=min(UPLOAD_TIMEOUT, per_part),
+                                           blocksize=CHUNK)
         try:
             conn.putrequest("PUT", "/" + rel, skip_accept_encoding=True)
+            conn.putheader("Connection", "close")
             conn.putheader("X-Token", pod["token"])
             conn.putheader("User-Agent", cloud.UA)
             conn.putheader("Content-Type", "application/octet-stream")
@@ -432,6 +440,10 @@ def _put_part(pod, rel, body, offset, total, name):
         finally:
             conn.close()
         if attempt < PART_TRIES:
+            # Recorded, not swallowed. A part quietly failing twice and succeeding on the
+            # third try looks exactly like a slow network from the outside, and the two
+            # need completely different fixes.
+            note_phase("retry", f"{name} at {offset / 1e6:.0f} MB — {last}")
             time.sleep(2 * attempt)
     raise RuntimeError(
         f"could not send {name} to the GPU: part at {offset / 1e6:.0f} MB failed "

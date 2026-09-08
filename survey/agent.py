@@ -245,7 +245,11 @@ class H(BaseHTTPRequestHandler):
             if left:
                 # The client's connection died mid-part. Say so rather than accepting a
                 # short write, which would leave a file that looks complete and decodes
-                # to nothing.
+                # to nothing. And drop the connection: on a keep-alive socket the
+                # unread remainder of this body would be parsed as the next request,
+                # which is the "parse_request -> send_error -> BrokenPipe" trace seen on
+                # the pod console.
+                self.close_connection = True
                 return self._json(400, {"error": f"short write: {left} bytes missing"})
         _sz = dest.stat().st_size
         _el = max(time.time() - _t0, 1e-6)
