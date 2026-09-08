@@ -31,7 +31,11 @@ from pathlib import Path
 import db
 
 ROOT = Path(__file__).parent.parent
-STATIONS = ROOT / "stations"
+# Station folders follow the data directory when one is set. Inside the frozen survey
+# build __file__ sits in a temp folder that is deleted on exit, so ROOT / "stations"
+# there would mean every annotated video vanishes when the app closes.
+STATIONS = (Path(os.environ["TRAFFICLENS_DATA"]) / "stations"
+            if os.environ.get("TRAFFICLENS_DATA") else ROOT / "stations")
 SUBDIRS = ("footage", "runs", "gold", "datasets", "models", "renders", "reports")
 
 
