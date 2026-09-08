@@ -37,33 +37,23 @@ STATE = {"phase": "idle", "pct": 0.0, "message": "waiting for work",
          "error": None, "result": None, "started": None}
 LOCK = threading.Lock()
 
-# How long this agent stays alive with nobody talking to it, and the absolute ceiling
-# whatever happens. Both are backstops for the case the app cannot cover: its own
-# watchdog and its start-up reconcile both need the app to still be running, so a laptop
-# that loses power mid-survey leaves a GPU with nobody watching it.
+# There is deliberately NO idle-exit timer in this agent.
 #
-# RunPod has no server-side idle-terminate -- checked against its schema, not assumed --
-# so the only thing that can act on a pod nobody is talking to is the pod. Exiting
-# releases the GPU; whether the pod record then stops billing entirely is the provider's
-# behaviour, not something this can guarantee. It is strictly better than running
-# forever, and it is not a substitute for the app terminating the pod properly.
-IDLE_EXIT = float(os.environ.get("TL_IDLE_EXIT", 600))
-MAX_LIFE = float(os.environ.get("TL_MAX_LIFE", 6 * 3600))
+# One was here, on the theory that a pod nobody is talking to could at least stop itself
+# once the app -- and its watchdog -- had died with the laptop. It was measured on a real
+# RTX 3090 pod: the agent exited on schedule, RunPod restarted the container within a
+# minute, the agent came back with a fresh clock, exited again 90 seconds later, and the
+# pod sat RUNNING at $0.22/hr through eleven such cycles until something external called
+# terminate. Exiting the process buys nothing. The pod's life is ended only by
+# podTerminate from the RunPod API, which the pod itself cannot call without carrying the
+# account's API key -- and a key sitting inside a rented container is a worse problem than
+# the one it would solve.
+#
+# So the guards that exist are all on the app side: the idle watchdog, the Stop button,
+# termination on normal app exit, and reconcile on the next launch. If the surveyor's
+# machine dies with a pod rented, the pod bills until the app is reopened. The Settings
+# screen says so.
 _SEEN = [time.time()]
-_BORN = time.time()
-
-
-def _reaper():
-    while True:
-        time.sleep(30)
-        with LOCK:
-            busy = STATE["phase"] in ("loading", "running")
-        idle = time.time() - _SEEN[0]
-        old = time.time() - _BORN
-        if (not busy and idle > IDLE_EXIT) or old > MAX_LIFE:
-            why = "idle" if not busy else "max lifetime"
-            print(f"exiting: {why} ({idle:.0f}s idle, {old:.0f}s old)", flush=True)
-            os._exit(0)
 
 
 def _extract(job):
@@ -165,7 +155,7 @@ class H(BaseHTTPRequestHandler):
         if TOKEN and self.headers.get("X-Token") != TOKEN:
             self._json(403, {"error": "bad token"})
             return False
-        _SEEN[0] = time.time()      # only a real caller counts as "somebody is using this"
+        _SEEN[0] = time.time()
         return True
 
     def do_GET(self):
@@ -262,7 +252,5 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     (WORK / "video").mkdir(parents=True, exist_ok=True)
     (WORK / "models").mkdir(parents=True, exist_ok=True)
-    threading.Thread(target=_reaper, daemon=True).start()
-    print(f"agent listening on {PORT} "
-          f"(exits after {IDLE_EXIT:.0f}s idle, {MAX_LIFE / 3600:.0f}h max)", flush=True)
+    print(f"agent listening on {PORT}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

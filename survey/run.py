@@ -113,6 +113,32 @@ def main():
     except Exception as e:
         print(f"  WARNING: could not check for running GPU pods: {e}", flush=True)
 
+
+    # A pod does not stop when the app does. Measured: an exited container is restarted by
+    # RunPod within a minute and the pod bills on, so the pod cannot end its own life --
+    # only a terminate call from here can. Closing the app normally is the common way a
+    # survey day ends, and it must take the GPU with it. Power loss and hard crashes are
+    # not covered by anything; reconcile_on_start catches those the next time the app opens.
+    import atexit
+    import signal
+
+    def _stop_pods(*_a):
+        # Printed even when there is nothing to stop, so a surveyor closing the app can
+        # see the check happened -- and so the path is observable in a test.
+        print("  closing: checking for rented GPUs…", flush=True)
+        try:
+            r = cloud.stop_all()
+            if r.get("stopped"):
+                print(f"  stopped {len(r['stopped'])} rented GPU(s) on exit", flush=True)
+        except Exception as e:
+            print(f"  could not stop rented GPUs on exit: {e}", flush=True)
+
+    atexit.register(_stop_pods)
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, lambda *_a: (_stop_pods(), os._exit(0)))
+        except (ValueError, OSError):
+            pass
     import api
     port = _free_port()
     url = f"http://127.0.0.1:{port}"

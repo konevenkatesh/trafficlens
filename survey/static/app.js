@@ -712,9 +712,13 @@ async function viewSettings() {
       <label class="chk" style="margin-top:16px"><input type="checkbox" id="cen"${
         c.enabled ? ' checked' : ''}> Use the rented GPU for detection</label>
       <p class="muted-sm" style="margin:6px 0 0">Off means everything runs on this computer,
-        free and slower. A rented GPU stops on its own after
-        ${Math.round((c.idle_seconds || 300) / 60)} minutes with nothing to do, and again
-        when the app next starts.</p>
+        free and slower.</p>
+      <p class="muted-sm" style="margin:6px 0 0"><b>When a rented GPU stops:</b> after
+        ${Math.round((c.idle_seconds || 600) / 60)} minutes with nothing to do while this app
+        is open, when you press Stop, when you close this app, and when the app next opens
+        if one was left behind. <b>It does not stop on its own</b> — if this computer loses
+        power with a GPU rented, it bills until the app is reopened or you stop it at
+        runpod.io. Keep the monthly limit small.</p>
     </div></div>
 
     <div class="card"><div class="card-body">

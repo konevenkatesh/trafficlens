@@ -110,9 +110,7 @@ def _docker_args(token):
     # video, and only then failed with "cannot import name 'YOLO' from 'ultralytics'
     # (unknown location)". /work has nothing in it to collide with.
     return ("bash -c '"
-            # The pod's own idle exit matches the app's watchdog, so both sides agree on
-            # what "abandoned" means.
-            f"export TL_TOKEN={token} TL_PORT={AGENT_PORT} TL_IDLE_EXIT={cloud.IDLE_SECONDS}; "
+            f"export TL_TOKEN={token} TL_PORT={AGENT_PORT}; "
             "mkdir -p /work; "
             f"echo {b64} | base64 -d > /work/agent.py; "
             "cd /work && python3 /work/agent.py"
