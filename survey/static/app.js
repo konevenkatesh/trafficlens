@@ -757,7 +757,7 @@ async function viewSettings() {
       <div class="grid g2">
         <div><label class="lbl">Endpoint URL</label>
           <input class="field sm" id="sEp" style="margin-top:6px" value="${esc(st.endpoint || '')}"
-                 placeholder="https://s3api-eu-ro-1.runpod.io"></div>
+                 placeholder="type it — e.g. https://s3api-eu-ro-1.runpod.io"></div>
         <div><label class="lbl">Bucket</label>
           <input class="field sm" id="sBk" style="margin-top:6px" value="${esc(st.bucket || '')}" placeholder="network volume ID"></div>
         <div><label class="lbl">Access key</label>
@@ -794,7 +794,9 @@ async function viewSettings() {
     try {
       await api('/api/storage', { endpoint: $('#sEp').value, bucket: $('#sBk').value,
         key: $('#sKey').value || null, secret: $('#sSec').value || null, region: $('#sRg').value });
-      toast('Storage saved'); viewSettings();
+      toast('Storage saved'); await viewSettings();
+      // Saving and then wondering is the failure mode; test straight away.
+      $('#sTest').click();
     } catch (e) { toast(e.message, true); }
   };
   $('#sTest').onclick = async () => {

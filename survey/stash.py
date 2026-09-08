@@ -55,20 +55,38 @@ def config():
     }
 
 
+def normalise_endpoint(ep):
+    """What a surveyor pastes, made into what boto3 needs: scheme added, path dropped."""
+    ep = (ep or "").strip()
+    if not ep:
+        return ""
+    if not re.match(r"^https?://", ep, re.I):
+        ep = "https://" + ep
+    m = re.match(r"^(https?://[^/\s]+)", ep, re.I)
+    return (m.group(1) if m else ep).rstrip("/")
+
+
 def save_config(endpoint=None, region=None, bucket=None, key=None, secret=None):
     import cloud
     if endpoint is not None:
-        cloud._set("s3_endpoint", endpoint.strip())
+        endpoint = normalise_endpoint(endpoint)
+    ep = (endpoint if endpoint is not None else cloud._setting("s3_endpoint", "")) or ""
     if region is not None:
         region = region.strip()
         # A RunPod endpoint names its datacenter: https://s3api-eu-ro-1.runpod.io is the
         # region EU-RO-1. Derive it rather than ask, because the field defaulted to
         # "auto", RunPod rejects "auto", and a surveyor has no way to know either.
-        ep = (endpoint if endpoint is not None else cloud._setting("s3_endpoint", "")) or ""
         m = re.search(r"s3api-([a-z0-9-]+)\.runpod\.io", ep.lower())
         if m and region.lower() in ("", "auto"):
             region = m.group(1).upper()
         cloud._set("s3_region", region or "auto")
+    # ...and the other way round: a datacenter ID with no endpoint is still enough. The
+    # Endpoint box shows the RunPod URL as a grey hint, and a hint reads as filled in.
+    reg = (region if region is not None else cloud._setting("s3_region", "")) or ""
+    if not ep and re.fullmatch(r"[A-Za-z]{2}-[A-Za-z]{2,3}-\d+", reg):
+        endpoint = f"https://s3api-{reg.lower()}.runpod.io"
+    if endpoint is not None:
+        cloud._set("s3_endpoint", endpoint)
     if bucket is not None:
         cloud._set("s3_bucket", bucket.strip())
     if key is not None and key.strip():
@@ -112,9 +130,18 @@ def _client():
 
 def check():
     """Can this app reach the bucket with these credentials? Said in one sentence."""
+    cfg = config()
+    if not cfg["endpoint"]:
+        return {"ok": False, "message": "the Endpoint URL box is empty — type it in "
+                "(for a volume in EU-RO-1 that is https://s3api-eu-ro-1.runpod.io); the "
+                "grey text is only an example"}
+    if not cfg["bucket"]:
+        return {"ok": False, "message": "the Bucket box is empty — paste the network volume ID"}
+    if not cfg["configured"]:
+        return {"ok": False, "message": "the access key or secret key is missing"}
     try:
         c = _client()
-        b = config()["bucket"]
+        b = cfg["bucket"]
         c.head_bucket(Bucket=b)
         # Round-trip a byte, because head_bucket alone can pass on read-only credentials.
         k = PREFIX + "_check"
@@ -122,17 +149,24 @@ def check():
         c.delete_object(Bucket=b, Key=k)
         return {"ok": True, "message": f"bucket {b} is reachable and writable"}
     except Exception as e:
-        return {"ok": False, "message": _reason(e)}
+        return {"ok": False, "message": _reason(e, cfg)}
 
 
-def _reason(e):
+def _reason(e, cfg=None):
     s = str(e)
+    ep = (cfg or {}).get("endpoint") or ""
     for needle, plain in (("InvalidAccessKeyId", "the access key is not recognised"),
                           ("SignatureDoesNotMatch", "the secret key is wrong"),
                           ("NoSuchBucket", "there is no bucket by that name"),
                           ("AccessDenied", "these credentials cannot write to that bucket"),
-                          ("Could not connect", "the endpoint URL is unreachable"),
-                          ("Name or service not known", "the endpoint URL does not resolve")):
+                          # RunPod answers a wrong key, secret or volume ID with a bare 403.
+                          ("(403)", "RunPod refused these credentials for that bucket — "
+                                    "check the access key, the secret and the volume ID"),
+                          ("Could not connect", f"nothing answers at {ep} — check the "
+                                                "endpoint URL and the internet connection"),
+                          ("Connect timeout", f"{ep} did not answer in time"),
+                          ("Name or service not known", f"{ep} does not resolve"),
+                          ("SSL", f"the secure connection to {ep} failed")):
         if needle in s:
             return plain
     return s[:160]
