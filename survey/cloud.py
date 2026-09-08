@@ -37,10 +37,10 @@ RP_GQL = "https://api.runpod.io/graphql"
 # key first. The Lab hit this once already and left a note; this is that note obeyed.
 UA = "TrafficLens/1.0 (+survey)"
 
-# A pod with no work is pure loss. Five minutes is long enough to ride out the gap between
-# one clip finishing and the next starting, short enough that a forgotten pod costs pennies
-# rather than a night's rent.
-IDLE_SECONDS = 300
+# A pod with no work is pure loss. Ten minutes, on the surveyor's request: long enough to
+# ride out the gap between one clip finishing and the next starting -- or a coffee -- and
+# short enough that a forgotten pod costs a few cents rather than a night's rent.
+IDLE_SECONDS = 600
 
 # The least a pod can usefully cost: image pull, boot, and one clip. A pod that cannot
 # pay for this out of what is left of the monthly limit is refused rather than started

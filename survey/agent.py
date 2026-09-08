@@ -47,7 +47,7 @@ LOCK = threading.Lock()
 # releases the GPU; whether the pod record then stops billing entirely is the provider's
 # behaviour, not something this can guarantee. It is strictly better than running
 # forever, and it is not a substitute for the app terminating the pod properly.
-IDLE_EXIT = float(os.environ.get("TL_IDLE_EXIT", 900))
+IDLE_EXIT = float(os.environ.get("TL_IDLE_EXIT", 600))
 MAX_LIFE = float(os.environ.get("TL_MAX_LIFE", 6 * 3600))
 _SEEN = [time.time()]
 _BORN = time.time()
