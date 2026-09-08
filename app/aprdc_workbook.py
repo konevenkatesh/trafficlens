@@ -92,7 +92,8 @@ def collect(video_ids):
     events, per_video = [], []
     for vid in video_ids:
         lines, src = sites.lines_for(vid)
-        v = db.one("SELECT id,name,start_clock,frames,fps FROM videos WHERE id=?", vid)
+        v = db.one("SELECT id,name,start_clock,frames,fps,clock_source FROM videos WHERE id=?",
+                   vid)
         if not lines or not v or not v["start_clock"]:
             per_video.append({"id": vid, "name": v["name"] if v else vid,
                               "total": None, "note": "no count line"})
@@ -105,8 +106,26 @@ def collect(video_ids):
                            "video_id": vid, "track_id": e["track_id"]})
         per_video.append({"id": vid, "name": v["name"], "total": r["total"],
                           "line_source": src, "start": v["start_clock"],
+                          "time_from": _clock_provenance(v.get("clock_source")),
                           "minutes": round((v["frames"] or 0) / (v["fps"] or 25) / 60, 1)})
     return events, per_video
+
+
+# Every hour and bin in the workbook is derived from the start time of its clip, so a
+# reader must be able to see how each start time was established. "13:17:11" read from a
+# filename, set by the surveyor from the clock burnt into the picture, or guessed from
+# when the file was copied are three very different claims that print identically.
+_PROVENANCE = {
+    "filename": "camera filename",
+    "manual":   "set by surveyor from the burnt-in clock",
+    "metadata": "camera file metadata",
+    "file-time": "FILE COPY TIME — unverified, may be wrong",
+    "assumed":  "ASSUMED — unverified, order only",
+}
+
+
+def _clock_provenance(source):
+    return _PROVENANCE.get(source or "", f"{source or 'unknown'} — unverified")
 
 
 def _class_of(e, attr_map):
@@ -499,13 +518,20 @@ def write(data, out_path, meta=None):
     ws = wb.create_sheet("Coverage")
     ws.cell(1, 1, "Coverage, provenance and what is not yet reviewed").font = Font(bold=True, size=12)
     ws.cell(3, 1, "Source clips").font = Font(bold=True)
-    for i, h in enumerate(["video", "name", "starts", "minutes", "counted", "line"]):
+    for i, h in enumerate(["video", "name", "starts", "time from", "minutes", "counted",
+                           "line"]):
         ws.cell(4, 1 + i, h).font = Font(bold=True, size=9)
     r = 5
     for v in data["per_video"]:
-        for i, k in enumerate(["id", "name", "start", "minutes", "total", "line_source"]):
-            ws.cell(r, 1 + i, v.get(k) if v.get(k) is not None else v.get("note", "—"))
+        for i, k in enumerate(["id", "name", "start", "time_from", "minutes", "total",
+                               "line_source"]):
+            c = ws.cell(r, 1 + i, v.get(k) if v.get(k) is not None else v.get("note", "—"))
+            # An unverified time is the single most consequential thing on this sheet, so
+            # it is not allowed to look like the others.
+            if k == "time_from" and "unverified" in str(v.get(k, "")):
+                c.font = Font(bold=True, color="C0392B")
         r += 1
+    ws.column_dimensions["D"].width = 44
     r += 2
     ws.cell(r, 1, "Columns not yet reviewed").font = Font(bold=True); r += 1
     if data["unreviewed_columns"]:
