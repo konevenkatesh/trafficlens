@@ -21,6 +21,7 @@ pod fetches, for a site that already has one.
 Objects are deleted once the results are in, and anything left over from a crash is swept
 on the next start, because a bucket quietly holding a station day of footage is a bill.
 """
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -47,7 +48,7 @@ def config():
     secret = g("s3_secret", "") or ""
     return {
         "endpoint": g("s3_endpoint", "") or "",
-        "region": g("s3_region", "auto") or "auto",
+        "region": g("s3_region", "") or "",
         "bucket": g("s3_bucket", "") or "",
         "key_hint": (key[:4] + "…" + key[-4:]) if len(key) > 10 else ("set" if key else ""),
         "configured": bool(key and secret and (g("s3_bucket", "") or "")),
@@ -59,7 +60,15 @@ def save_config(endpoint=None, region=None, bucket=None, key=None, secret=None):
     if endpoint is not None:
         cloud._set("s3_endpoint", endpoint.strip())
     if region is not None:
-        cloud._set("s3_region", region.strip() or "auto")
+        region = region.strip()
+        # A RunPod endpoint names its datacenter: https://s3api-eu-ro-1.runpod.io is the
+        # region EU-RO-1. Derive it rather than ask, because the field defaulted to
+        # "auto", RunPod rejects "auto", and a surveyor has no way to know either.
+        ep = (endpoint if endpoint is not None else cloud._setting("s3_endpoint", "")) or ""
+        m = re.search(r"s3api-([a-z0-9-]+)\.runpod\.io", ep.lower())
+        if m and region.lower() in ("", "auto"):
+            region = m.group(1).upper()
+        cloud._set("s3_region", region or "auto")
     if bucket is not None:
         cloud._set("s3_bucket", bucket.strip())
     if key is not None and key.strip():
