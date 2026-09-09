@@ -55,6 +55,17 @@ def config():
     }
 
 
+def _pick(text, prefix):
+    """The RunPod S3 key of the given kind inside a pasted string, or the stripped
+    string when it does not carry one (a generic S3 store's key looks different)."""
+    if text is None:
+        return None
+    m = re.search(prefix + r"[A-Za-z0-9]+", text)
+    if m:
+        return m.group(0)
+    return "".join(ch for ch in text if ch.isprintable() and not ch.isspace()).strip("\"'")
+
+
 def normalise_endpoint(ep):
     """What a surveyor pastes, made into what boto3 needs: scheme added, path dropped."""
     ep = (ep or "").strip()
@@ -132,10 +143,15 @@ def save_config(endpoint=None, region=None, bucket=None, key=None, secret=None):
         cloud._set("s3_endpoint", endpoint)
     if bucket is not None:
         cloud._set("s3_bucket", bucket.strip())
-    if key is not None and key.strip():
-        cloud._set("s3_key", key.strip())
-    if secret is not None and secret.strip():
-        cloud._set("s3_secret", secret.strip())
+    # Take the key out of whatever was pasted. Moving a key between laptops through a
+    # chat message or a text file brings labels, quotes, an "aws_access_key_id =" prefix
+    # or invisible characters with it; RunPod answers a malformed key id with a bare 401.
+    key = _pick(key, "user_")
+    secret = _pick(secret, "rps_")
+    if key:
+        cloud._set("s3_key", key)
+    if secret:
+        cloud._set("s3_secret", secret)
     resolve()
     return config()
 
@@ -194,7 +210,10 @@ def check():
         c.delete_object(Bucket=b, Key=k)
         return {"ok": True, "message": f"bucket {b} is reachable and writable"}
     except Exception as e:
-        return {"ok": False, "message": _reason(e, cfg)}
+        # Say which key was used: the difference between "wrong secret" and "you never
+        # saved the key on this laptop" is invisible otherwise.
+        return {"ok": False, "message": f"{_reason(e, cfg)} (access key in use: "
+                                        f"{cfg['key_hint'] or 'none'})"}
 
 
 def _reason(e, cfg=None):
@@ -207,6 +226,11 @@ def _reason(e, cfg=None):
                           # RunPod answers a wrong key, secret or volume ID with a bare 403.
                           ("(403)", "RunPod refused these credentials for that bucket — "
                                     "check the access key, the secret and the volume ID"),
+                          # A bare 401 means the request carried no usable key id at all:
+                          # measured — every wrong key, secret, region or clock gives 403.
+                          ("(401)", "RunPod did not see an access key in the request — the "
+                                    "Access key box holds something other than the user_… "
+                                    "key; paste the key again, on its own"),
                           ("Could not connect", f"nothing answers at {ep} — check the "
                                                 "endpoint URL and the internet connection"),
                           ("Connect timeout", f"{ep} did not answer in time"),
