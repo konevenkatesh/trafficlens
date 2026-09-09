@@ -23,6 +23,7 @@ on the next start, because a bucket quietly holding a station day of footage is 
 """
 import re
 import threading
+import urllib.error
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -181,6 +182,9 @@ def _client():
           "region_name": g("s3_region", "auto") or "auto",
           "config": Config(retries={"max_attempts": 3, "mode": "standard"},
                            connect_timeout=20, read_timeout=120,
+                           # Explicit, so nothing on the machine (an old ~/.aws/config,
+                           # an environment variable) can change how requests are signed.
+                           signature_version="s3v4",
                            s3={"addressing_style": "path"})}
     ep = g("s3_endpoint", "")
     if ep:
@@ -188,10 +192,48 @@ def _client():
     return boto3.client("s3", **kw)
 
 
+def clock_skew(endpoint, timeout=15):
+    """Seconds this computer's clock is ahead of the storage server's, from the Date
+    header of an unauthenticated request; None if the server could not be asked.
+
+    Every signed request carries this computer's idea of UTC and RunPod rejects any
+    more than an hour out. A Windows laptop with the zone set wrong and the time typed
+    to look right is hours out in UTC while showing the right time on screen -- and the
+    error it gets says nothing about clocks.
+    """
+    import urllib.request
+    import email.utils
+    if not endpoint:
+        return None
+    req = urllib.request.Request(endpoint.rstrip("/") + "/", method="GET",
+                                 headers={"User-Agent": "TrafficLens"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            date = r.headers.get("Date")
+    except urllib.error.HTTPError as e:      # 401/403 still carry the server's clock
+        date = e.headers.get("Date")
+    except Exception:
+        return None
+    if not date:
+        return None
+    try:
+        server = email.utils.parsedate_to_datetime(date).timestamp()
+    except Exception:
+        return None
+    return time.time() - server
+
+
 def check():
     """Can this app reach the bucket with these credentials? Said in one sentence."""
     why = resolve()
     cfg = config()
+    skew = clock_skew(cfg["endpoint"])
+    if skew is not None and abs(skew) > 300:
+        m = abs(skew) / 60
+        return {"ok": False, "message": (
+            f"this computer's clock is {m:.0f} minutes {'ahead' if skew > 0 else 'behind'} "
+            f"— the storage server refuses requests signed with the wrong time. In Windows: "
+            f"Settings → Time & language → Date & time → Sync now, and check the time zone")}
     if not cfg["endpoint"]:
         return {"ok": False, "message": "the Endpoint URL is not set and could not be "
                 f"worked out: {why}. Type it in (for a volume in EU-RO-1 it is "
