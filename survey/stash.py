@@ -242,8 +242,27 @@ def check():
         return {"ok": False, "message": "the Bucket box is empty — paste the network volume ID"}
     if not cfg["configured"]:
         return {"ok": False, "message": "the access key or secret key is missing"}
+    trace = {}
+
+    def _capture(request, **_):
+        # What actually left this computer, secret masked: the difference between "the
+        # key never reached the request" and "the server rejected the key".
+        auth = request.headers.get("Authorization", "")
+        if isinstance(auth, bytes):
+            auth = auth.decode("latin-1", "replace")
+        cred = ""
+        if "Credential=" in auth:
+            cred = auth.split("Credential=", 1)[1].split("/", 1)[0]
+        trace.update(host=request.headers.get("Host", request.url.split("/")[2] if "//" in request.url else ""),
+                     signed=auth.split(" ", 1)[0] if auth else "unsigned",
+                     key_in_request=(cred[:5] + "…" + cred[-4:]) if len(cred) > 10 else (cred or "none"),
+                     date=str(request.headers.get("X-Amz-Date", request.headers.get("x-amz-date", "")), "latin-1")
+                          if isinstance(request.headers.get("X-Amz-Date", request.headers.get("x-amz-date", "")), bytes)
+                          else request.headers.get("X-Amz-Date", request.headers.get("x-amz-date", "")))
+
     try:
         c = _client()
+        c.meta.events.register("before-send.s3.*", _capture)
         b = cfg["bucket"]
         c.head_bucket(Bucket=b)
         # Round-trip a byte, because head_bucket alone can pass on read-only credentials.
@@ -254,8 +273,17 @@ def check():
     except Exception as e:
         # Say which key was used: the difference between "wrong secret" and "you never
         # saved the key on this laptop" is invisible otherwise.
-        return {"ok": False, "message": f"{_reason(e, cfg)} (access key in use: "
-                                        f"{cfg['key_hint'] or 'none'})"}
+        meta = (getattr(e, "response", None) or {}).get("ResponseMetadata") or {}
+        hdr = meta.get("HTTPHeaders") or {}
+        detail = (f" · saved key {cfg['key_hint'] or 'none'}"
+                  + (f" · request to {trace.get('host')} carried key {trace.get('key_in_request')}, "
+                     f"{trace.get('signed')}, date {trace.get('date')}" if trace else
+                     " · no request was sent")
+                  + (f" · server answered {meta.get('HTTPStatusCode')}"
+                     f"{' via ' + hdr['server'] if hdr.get('server') else ''}"
+                     f"{' (' + hdr['x-amz-request-id'] + ')' if hdr.get('x-amz-request-id') else ''}"
+                     if meta else ""))
+        return {"ok": False, "message": _reason(e, cfg) + detail}
 
 
 def _reason(e, cfg=None):
