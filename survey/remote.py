@@ -65,6 +65,12 @@ BOOT_TIMEOUT = 600
 # app can fix or the surveyor can influence -- the only remedy is another machine, and a
 # failed attempt costs about two cents.
 BOOT_TRIES = 3
+# How long a lost connection is waited out before a clip is given up. A power cut at the
+# surveyor's end takes the router with it; the pod neither knows nor cares, and finishes
+# the clip. Failing the clip on the first unanswered poll threw that work away and rented
+# another machine to redo it. Thirty minutes covers a power cut, a hotspot swap and a
+# router reboot; longer than that, the clip is retried from the volume on the next run.
+NET_GRACE = 1800
 # 4MB writes rather than the 8KB urllib defaults to. This was changed on the theory that
 # the small chunks were throttling upload; measured on one pod, both ways, same file, it
 # makes no difference at all — 2.68 MB/s against 2.64 MB/s. Kept because streaming by hand
@@ -211,6 +217,49 @@ def _call(pod, path, data=None, method=None, timeout=120, raw=False):
     return body if raw else json.loads(body or b"{}")
 
 
+def _network_error(e):
+    """A call that never reached the pod, as opposed to one the pod answered."""
+    if isinstance(e, urllib.error.HTTPError):
+        return False                     # the pod answered, with a status
+    import http.client
+    import socket
+    return isinstance(e, (urllib.error.URLError, socket.timeout, TimeoutError,
+                          ConnectionError, http.client.HTTPException, OSError))
+
+
+def _patient(pod, path, note=None, grace=NET_GRACE, **kw):
+    """_call, but a lost connection is waited out for up to `grace` seconds.
+
+    Retries only on errors that mean the request never got there; an answer from the pod,
+    even an error, is returned to the caller at once. Stop everything still cuts in.
+    """
+    import engine as _e
+    down_since = None
+    delay = 5
+    while True:
+        try:
+            out = _call(pod, path, **kw)
+            if down_since and note:
+                note("connection is back")
+            return out
+        except Exception as e:
+            if not _network_error(e):
+                raise
+            now = time.time()
+            down_since = down_since or now
+            if now - down_since > grace:
+                raise RuntimeError(f"no connection to the rented machine for "
+                                   f"{int((now - down_since) / 60)} minutes — the clip "
+                                   f"will be retried from storage on the next run") from e
+            if _e.ABORT.is_set():
+                raise RuntimeError("stopped by the surveyor") from e
+            if note:
+                note(f"connection lost — waiting for it to come back "
+                     f"({int((now - down_since) / 60)} min so far, the GPU carries on)")
+            time.sleep(delay)
+            delay = min(delay * 2, 30)
+
+
 def _direct_port(pod_id):
     """The pod's public IP and the port RunPod mapped to the agent, or None.
 
@@ -312,10 +361,10 @@ def _create(gpu, token):
     # -- the first 4090 this rented billed $0.74/hr against a $0.34 quote. Recording what
     # was really charged is the difference between a ledger and a guess.
     rate = pod.get("costPerHr") or 0
-    db.run("""INSERT INTO cloud_runs (pod_id,gpu,cost_per_hr,started,status,note)
-              VALUES (?,?,?,?,'starting',?)""",
+    db.run("""INSERT INTO cloud_runs (pod_id,gpu,cost_per_hr,started,status,note,token)
+              VALUES (?,?,?,?,'starting',?,?)""",
            pod["id"], gpu, rate, time.time(),
-           f"detection · {got.lower()} cloud · ${rate:.2f}/hr")
+           f"detection · {got.lower()} cloud · ${rate:.2f}/hr", token)
     return {"id": pod["id"], "token": token,
             "cost_per_hr": pod.get("costPerHr") or 0}, None
 
@@ -521,6 +570,77 @@ def _wait_ready(pod, on_note=None):
                    f"where nothing this app does can help.")
 
 
+def reattach():
+    """After a restart, re-join the pod this app was using rather than kill it.
+
+    A crash or a power cut leaves the pod running and, very often, finishing the clip.
+    The ledger holds its token; if the pod is alive and accepts this app's signature,
+    it is ours again and the clip's result is collected instead of re-detected.
+    Returns the pod id, or None when there is nothing to re-join.
+    """
+    cloud.init()
+    live = {p["id"]: p for p in cloud.live_pods()}
+    if not live:
+        return None
+    rows = db.rows("""SELECT pod_id, token, tcp, cost_per_hr FROM cloud_runs
+                      WHERE status IN ('starting','running') AND token IS NOT NULL
+                      ORDER BY started DESC""")
+    for r in rows:
+        if r["pod_id"] not in live:
+            continue
+        pod = {"id": r["pod_id"], "token": r["token"], "cost_per_hr": r["cost_per_hr"] or 0}
+        tcp = _direct_port(pod["id"])
+        if not tcp and r["tcp"] and ":" in r["tcp"]:
+            host, port = r["tcp"].rsplit(":", 1)
+            tcp = (host, int(port))
+        pod["tcp"] = tcp
+        try:
+            p = _call(pod, "/progress", timeout=20)
+        except Exception:
+            continue                       # not answering, or not ours: reconcile kills it
+        with LOCK:
+            _POD.clear()
+            _POD.update(pod)
+        db.run("""UPDATE cloud_runs SET note = COALESCE(note,'') || ' · re-joined after a restart'
+                  WHERE pod_id=?""", pod["id"])
+        note_phase("boot", f"re-joined the running GPU ({p.get('phase')}"
+                           f"{' — ' + p['video'] if p.get('video') else ''})")
+        cloud.note_work()
+        return pod["id"]
+    return None
+
+
+def _drain(pod, use_id, note):
+    """The pod is busy with a clip this app did not just ask for: wait for it, keep the
+    result if it belongs to a recording that still needs one, then carry on.
+
+    Happens after a restart, when the queue reaches a different clip before the one the
+    pod was mid-way through. Throwing that clip's minutes away would be the old failure.
+    """
+    while True:
+        p = _patient(pod, "/progress", note=note)
+        if p.get("phase") in ("done", "error", "idle"):
+            break
+        note(f"cloud: finishing {p.get('video') or 'the previous clip'} first — "
+             f"{p.get('message') or p.get('phase')}", p.get("pct"))
+        time.sleep(4)
+        cloud.note_work()
+    if p.get("phase") != "done" or not p.get("video"):
+        return
+    owners = db.rows("""SELECT id FROM videos WHERE name=? AND id NOT IN
+                        (SELECT DISTINCT video_id FROM tracks)""", p["video"])
+    if len(owners) != 1:
+        return                             # ambiguous or already done: leave it
+    vid = owners[0]["id"]
+    blob = _patient(pod, "/result", note=note, raw=True, timeout=1800)
+    _ingest(vid, use_id, json.loads(gzip.decompress(blob)))
+    import dedup as dedup_mod
+    dedup_mod.dedup(vid)
+    import work
+    work.cancel(video_id=vid)              # its queued re-run is no longer needed
+    note(f"kept the finished result for {p['video']}")
+
+
 def _stopping():
     """Has the surveyor pressed Stop everything? Nothing may be rented while this holds."""
     try:
@@ -602,6 +722,9 @@ def ensure_pod(on_note=None):
                 cloud.terminate(pod["id"])
                 return None, f"the rented machine did not accept this app's signature ({e})"
             pod["tcp"] = pod.get("tcp") or _direct_port(pod["id"])
+            if pod["tcp"]:
+                db.run("UPDATE cloud_runs SET tcp=? WHERE pod_id=?",
+                       f"{pod['tcp'][0]}:{pod['tcp'][1]}", pod["id"])
             if on_note:
                 on_note("direct upload port: " + (f"{pod['tcp'][0]}:{pod['tcp'][1]}"
                         if pod["tcp"] else "none on this host — uploads go via the proxy"))
@@ -839,11 +962,21 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
             _put(pod, f"video/{Path(v['path']).name}", v["path"], note)
 
         stride = engine.stride_for(v["fps"])
-        _call(pod, "/run", json.dumps({
-            "video": Path(v["path"]).name, "weights": weights.name,
-            "video_url": video_url, "video_path": video_path,
-            "imgsz": imgsz, "conf": conf, "stride": stride,
-            "frames": v["frames"]}).encode())
+        name = Path(v["path"]).name
+        # A re-joined pod may already be on this clip, or have finished it: use that.
+        p0 = _patient(pod, "/progress", note=note)
+        busy = p0.get("phase") in ("copying", "fetching", "loading", "running")
+        if p0.get("video") == name and (busy or (p0.get("phase") == "done"
+                                                 and p0.get("has_result"))):
+            note(f"re-joining {name} on the GPU — {p0.get('message') or p0.get('phase')}")
+        else:
+            if busy:
+                _drain(pod, use_id, note)
+            _call(pod, "/run", json.dumps({
+                "video": name, "weights": weights.name,
+                "video_url": video_url, "video_path": video_path,
+                "imgsz": imgsz, "conf": conf, "stride": stride,
+                "frames": v["frames"]}).encode())
 
         # The GPU is now busy for minutes. Use that time to send the next clip rather
         # than leaving the uplink idle and then making the surveyor wait for it.
@@ -858,7 +991,7 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
             if _e.ABORT.is_set():
                 raise RuntimeError("stopped by the surveyor")
             cloud.note_work()          # the watchdog must not kill a pod mid-clip
-            p = _call(pod, "/progress")
+            p = _patient(pod, "/progress", note=note)
             if p.get("phase") == "error":
                 raise RuntimeError(p.get("error") or "the GPU reported a failure")
             # The volume-to-local-disk copy, once the agent reports it done: listed as a
@@ -883,7 +1016,7 @@ def extract(video_id, job_id, imgsz=960, conf=0.12, model_id=None):
 
         note_phase("detect", Path(v["path"]).name, seconds=time.time() - t_detect)
         note("bringing the results back")
-        blob = _call(pod, "/result", raw=True, timeout=1800)
+        blob = _patient(pod, "/result", note=note, raw=True, timeout=1800)
         res = json.loads(gzip.decompress(blob))
         _ingest(video_id, use_id, res)
         cloud.note_work()

@@ -277,6 +277,10 @@ def _extract(job):
 
 
 def _run(job):
+    with LOCK:
+        # Which recording this is about, reported on every poll: an app that restarts
+        # mid-clip finds its own work here instead of starting the clip again.
+        STATE["video"] = job.get("video")
     try:
         _extract(job)
     except Exception as e:
@@ -349,6 +353,8 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 out = {k: STATE[k] for k in ("phase", "pct", "message", "error")}
                 out["copy"] = STATE.get("copy")
+                out["video"] = STATE.get("video")
+                out["has_result"] = STATE.get("result") is not None
             # Reported on every poll because the app now sends the next clip while this
             # one runs. Two recordings at a gigabyte each is comfortable; a leak that
             # keeps every clip of a station day is not, and "no space left on device"
@@ -446,8 +452,9 @@ class H(BaseHTTPRequestHandler):
         if self.path != "/run":
             return self._json(404, {"error": "no such path"})
         with LOCK:
-            if STATE["phase"] in ("loading", "running"):
-                return self._json(409, {"error": "already running"})
+            if STATE["phase"] in ("copying", "fetching", "loading", "running"):
+                return self._json(409, {"error": "already running",
+                                        "video": STATE.get("video")})
         n = int(self.headers.get("Content-Length") or 0)
         job = json.loads(self.rfile.read(n) or b"{}")
         threading.Thread(target=_run, args=(job,), daemon=True).start()

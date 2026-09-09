@@ -105,7 +105,15 @@ def main():
     # the idle watchdog is armed for this one.
     try:
         import cloud
-        r = cloud.reconcile_on_start()
+        import remote
+        kept = None
+        try:
+            kept = remote.reattach()
+            if kept:
+                print("  re-joined the GPU still running from the last session", flush=True)
+        except Exception as e:
+            print(f"  could not check for a running GPU to re-join: {e}", flush=True)
+        r = cloud.reconcile_on_start(keep=[kept] if kept else ())
         if r.get("orphans"):
             print(f"  stopped {len(r['orphans'])} GPU pod(s) left from a previous session"
                   f"  (${r['recovered_usd']})", flush=True)

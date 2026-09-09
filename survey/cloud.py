@@ -70,8 +70,16 @@ CREATE TABLE IF NOT EXISTS lab_site_settings (
 
 
 def init():
-    db.conn().executescript(SCHEMA)
-    db.conn().commit()
+    c = db.conn()
+    c.executescript(SCHEMA)
+    # Added after the fact: the pod's token and direct port, so an app that restarts can
+    # find and re-join its own pod instead of killing it. CREATE TABLE IF NOT EXISTS
+    # does not add columns to an existing table.
+    have = {r[1] for r in c.execute("PRAGMA table_info(cloud_runs)")}
+    for col in ("token", "tcp"):
+        if col not in have:
+            c.execute(f"ALTER TABLE cloud_runs ADD COLUMN {col} TEXT")
+    c.commit()
 
 
 # ───────────────────────────── settings ─────────────────────────────
@@ -389,15 +397,16 @@ def start_watchdog():
     _WATCH.start()
 
 
-def reconcile_on_start():
+def reconcile_on_start(keep=()):
     """Anything left running from a previous session is orphaned. Kill it and say so.
 
     The app closing does not stop a pod. Without this, quitting mid-run leaves a GPU
-    billing until somebody opens the RunPod dashboard.
+    billing until somebody opens the RunPod dashboard. `keep` is the pod this app has
+    just re-attached to (remote.reattach): its work is still wanted.
     """
     if not _key():
         return {"orphans": []}
-    orphans = live_pods()
+    orphans = [p for p in live_pods() if p["id"] not in set(keep or ())]
     for p in orphans:
         terminate(p["id"])
     return {"orphans": [p["id"] for p in orphans],
